@@ -179,51 +179,92 @@ def main() -> None:
     logger.info("开始A股每日分析")
     logger.info("=" * 50)
 
+    # 检查是否在 CI 环境中
+    is_ci = os.environ.get("CI", "false").lower() == "true"
+    if is_ci:
+        logger.info("检测到 CI 环境，将使用容错模式")
+
     # 1. 加载配置
     config = load_config()
     logger.info("配置加载完成")
 
     # 2. 获取股票池
     logger.info("开始获取股票池...")
-    stock_pool = get_stock_pool(config.filter)
-    logger.info(f"股票池获取完成，共 {len(stock_pool)} 只股票")
+    stock_pool = None
+    try:
+        stock_pool = get_stock_pool(config.filter)
+        logger.info(f"股票池获取完成，共 {len(stock_pool)} 只股票")
+    except Exception as e:
+        logger.error(f"获取股票池失败: {e}")
+        if is_ci:
+            logger.info("CI 环境中股票池获取失败，将生成空报告")
+            stock_pool = pd.DataFrame()
+        else:
+            raise
 
     # 3. 获取ETF池
     logger.info("开始获取ETF池...")
-    etf_pool = get_etf_pool(config)
-    logger.info(f"ETF池获取完成，共 {len(etf_pool)} 只ETF")
+    etf_pool: list[EtfInfo] = []
+    try:
+        etf_pool = get_etf_pool(config)
+        logger.info(f"ETF池获取完成，共 {len(etf_pool)} 只ETF")
+    except Exception as e:
+        logger.error(f"获取ETF池失败: {e}")
+        if is_ci:
+            logger.info("CI 环境中ETF池获取失败，将跳过ETF分析")
+        else:
+            raise
 
     # 4. 抓取并分析新闻（全局只执行一次）
     logger.info("开始抓取新闻...")
-    news = fetch_news()
-    news = filter_by_credibility(news)
-    logger.info(f"新闻抓取完成，共 {len(news)} 条")
+    news = []
+    try:
+        news = fetch_news()
+        news = filter_by_credibility(news)
+        logger.info(f"新闻抓取完成，共 {len(news)} 条")
+    except Exception as e:
+        logger.error(f"抓取新闻失败: {e}")
+        if is_ci:
+            logger.info("CI 环境中新闻抓取失败，将使用空新闻列表")
+        else:
+            raise
 
     # LLM分析政策影响
     llm_config = {
         "api_url": config.llm_api_url,
         "api_key": config.llm_api_key,
     }
-    policy_impacts = analyze_policy_impact(news, llm_config)
-    logger.info(f"政策影响分析完成，共 {len(policy_impacts)} 条")
+    policy_impacts: list[PolicyImpact] = []
+    try:
+        policy_impacts = analyze_policy_impact(news, llm_config)
+        logger.info(f"政策影响分析完成，共 {len(policy_impacts)} 条")
+    except Exception as e:
+        logger.error(f"政策影响分析失败: {e}")
+        if is_ci:
+            logger.info("CI 环境中政策影响分析失败，将使用空影响列表")
+        else:
+            raise
 
     # 5. 分析个股
     logger.info("开始分析个股...")
     stock_results: list[ScoreResult] = []
-    for idx, (_, stock) in enumerate(stock_pool.iterrows()):
-        try:
-            result = analyze_single_stock(stock, policy_impacts, config)
-            if (
-                result.total_score >= config.score_threshold_high
-                or result.total_score < config.score_threshold_low
-            ):
-                stock_results.append(result)
-                logger.info(
-                    f"[{idx + 1}/{len(stock_pool)}] {result.name} ({result.code}): "
-                    f"{result.total_score:.0f}分 ({result.judgment})"
-                )
-        except Exception as e:
-            logger.warning(f"分析股票 {stock.get('code', '未知')} 失败: {e}")
+    if stock_pool is not None and not stock_pool.empty:
+        for idx, (_, stock) in enumerate(stock_pool.iterrows()):
+            try:
+                result = analyze_single_stock(stock, policy_impacts, config)
+                if (
+                    result.total_score >= config.score_threshold_high
+                    or result.total_score < config.score_threshold_low
+                ):
+                    stock_results.append(result)
+                    logger.info(
+                        f"[{idx + 1}/{len(stock_pool)}] {result.name} ({result.code}): "
+                        f"{result.total_score:.0f}分 ({result.judgment})"
+                    )
+            except Exception as e:
+                logger.warning(f"分析股票 {stock.get('code', '未知')} 失败: {e}")
+    else:
+        logger.info("股票池为空，跳过个股分析")
 
     logger.info(f"个股分析完成，共 {len(stock_results)} 只符合条件")
 
