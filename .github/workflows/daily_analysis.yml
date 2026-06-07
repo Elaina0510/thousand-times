@@ -32,12 +32,33 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run analysis
+        id: analysis
         env:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           LLM_API_URL: ${{ secrets.LLM_API_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           PYTHONPATH: ${{ github.workspace }}/src
-        run: python src/main.py
+        run: |
+          echo "Starting analysis..."
+          python src/main.py 2>&1 | tee logs/analysis_output.log
+          echo "Analysis completed with exit code: $?"
+
+      - name: Display logs
+        if: always()
+        run: |
+          echo "=== Analysis Output ==="
+          if [ -f "logs/analysis_output.log" ]; then
+            cat logs/analysis_output.log
+          else
+            echo "No log file found"
+          fi
+          echo ""
+          echo "=== Analysis Log ==="
+          if [ -f "logs/analysis.log" ]; then
+            cat logs/analysis.log
+          else
+            echo "No analysis log found"
+          fi
 
       - name: Upload logs
         if: always()
