@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-import akshare as ak  # type: ignore[import-untyped]
 import numpy as np
 import pandas as pd
 
@@ -35,9 +34,8 @@ class KlineData:
     macd_hist: list[float]
 
 
-@retry(max_attempts=3, backoff_factor=2.0)
-def _fetch_stock_hist(code: str, days: int) -> pd.DataFrame:
-    """获取个股历史行情（带重试）。
+def _fetch_stock_hist_ashare(code: str, days: int) -> pd.DataFrame:
+    """使用 Ashare 获取个股历史行情。
 
     Args:
         code: 股票代码。
@@ -46,16 +44,16 @@ def _fetch_stock_hist(code: str, days: int) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
-    # 优先使用远程 API
     try:
-        from remote_data import is_remote_available, get_stock_hist_remote
-        if is_remote_available():
-            logger.info(f"使用远程 API 获取股票 {code} 历史数据")
-            return get_stock_hist_remote(code, days)
+        from ashare_data import get_stock_hist_ashare
+        df = get_stock_hist_ashare(code, days)
+        if not df.empty:
+            return df
     except Exception as e:
-        logger.warning(f"远程 API 调用失败，回退到 AKShare: {e}")
+        logger.warning(f"Ashare 获取 {code} 失败: {e}")
 
     # 回退到 AKShare
+    import akshare as ak  # type: ignore[import-untyped]
     result: pd.DataFrame = ak.stock_zh_a_hist(
         symbol=code,
         period="daily",
@@ -64,27 +62,26 @@ def _fetch_stock_hist(code: str, days: int) -> pd.DataFrame:
     return result
 
 
-@retry(max_attempts=3, backoff_factor=2.0)
-def _fetch_etf_hist(code: str, days: int) -> pd.DataFrame:
-    """获取ETF历史行情（带重试）。
+def _fetch_etf_hist_ashare(code: str, days: int) -> pd.DataFrame:
+    """使用 Ashare 获取 ETF 历史行情。
 
     Args:
-        code: ETF代码。
+        code: ETF 代码。
         days: 回溯天数。
 
     Returns:
         包含历史行情的 DataFrame。
     """
-    # 优先使用远程 API
     try:
-        from remote_data import is_remote_available, get_etf_hist_remote
-        if is_remote_available():
-            logger.info(f"使用远程 API 获取 ETF {code} 历史数据")
-            return get_etf_hist_remote(code, days)
+        from ashare_data import get_etf_hist_ashare
+        df = get_etf_hist_ashare(code, days)
+        if not df.empty:
+            return df
     except Exception as e:
-        logger.warning(f"远程 API 调用失败，回退到 AKShare: {e}")
+        logger.warning(f"Ashare 获取 ETF {code} 失败: {e}")
 
     # 回退到 AKShare
+    import akshare as ak  # type: ignore[import-untyped]
     result: pd.DataFrame = ak.fund_etf_hist_em(
         symbol=code,
         period="daily",
@@ -148,10 +145,10 @@ def get_kline_data(code: str, days: int = 60, is_etf: bool = False) -> KlineData
         KlineData 对象。
 
     Raises:
-        RuntimeError: AKShare 接口多次重试后仍失败。
+        RuntimeError: 数据获取失败。
     """
     # 获取历史行情
-    df = _fetch_etf_hist(code, days) if is_etf else _fetch_stock_hist(code, days)
+    df = _fetch_etf_hist_ashare(code, days) if is_etf else _fetch_stock_hist_ashare(code, days)
 
     random_delay()
 
@@ -171,7 +168,7 @@ def get_kline_data(code: str, days: int = 60, is_etf: bool = False) -> KlineData
     required_columns = ["date", "open", "high", "low", "close", "volume"]
     for col in required_columns:
         if col not in df.columns:
-            raise ValueError(f"AKShare 返回数据缺少必要列: {col}")
+            raise ValueError(f"数据缺少必要列: {col}")
 
     # 取最近 days 天的数据
     df = df.tail(days).reset_index(drop=True)

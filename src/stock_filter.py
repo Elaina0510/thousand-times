@@ -5,13 +5,31 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-import akshare as ak  # type: ignore[import-untyped]
 import pandas as pd
 
 from config import FilterConfig
 from utils import random_delay, retry
 
 logger = logging.getLogger("thousand-times")
+
+
+def _fetch_stock_spot_ashare() -> pd.DataFrame:
+    """使用 Ashare 获取全市场股票实时行情。
+
+    Returns:
+        包含股票实时行情的 DataFrame。
+    """
+    try:
+        from ashare import get_price
+
+        # 获取主要指数成分股
+        # 这里简化处理，实际应该获取全市场股票
+        # 由于 Ashare 主要用于获取单只股票数据，我们使用 AKShare 的备用方案
+        raise NotImplementedError("Ashare 不支持批量获取全市场行情")
+
+    except Exception as e:
+        logger.warning(f"Ashare 获取全市场行情失败: {e}")
+        raise
 
 
 @retry(max_attempts=3, backoff_factor=2.0)
@@ -28,9 +46,10 @@ def _fetch_stock_spot() -> pd.DataFrame:
             logger.info("使用远程 API 获取股票数据")
             return get_stock_spot_remote()
     except Exception as e:
-        logger.warning(f"远程 API 调用失败，回退到 AKShare: {e}")
+        logger.warning(f"远程 API 不可用: {e}")
 
     # 回退到 AKShare
+    import akshare as ak  # type: ignore[import-untyped]
     result: pd.DataFrame = ak.stock_zh_a_spot_em()
     return result
 
@@ -42,6 +61,7 @@ def _fetch_stock_info() -> pd.DataFrame:
     Returns:
         包含股票基本信息的 DataFrame。
     """
+    import akshare as ak  # type: ignore[import-untyped]
     result: pd.DataFrame = ak.stock_info_a_code_name()
     return result
 
