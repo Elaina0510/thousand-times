@@ -38,6 +38,7 @@ jobs:
           LLM_API_URL: ${{ secrets.LLM_API_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           PYTHONPATH: ${{ github.workspace }}/src
+          CI: true
         run: |
           echo "Starting analysis..."
           python src/main.py 2>&1 | tee logs/analysis_output.log
