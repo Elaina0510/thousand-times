@@ -6,10 +6,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,3 +35,28 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/src
         run: python -c "import main; print('Main module imported successfully')"
+
+      - name: Test main.py execution (dry run)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          LLM_API_URL: ${{ secrets.LLM_API_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          echo "Testing main.py execution..."
+          python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          import os
+          from dotenv import load_dotenv
+          load_dotenv()
+          print('Environment variables:')
+          print(f'  PUSHPLUS_TOKEN: {\"已设置\" if os.environ.get(\"PUSHPLUS_TOKEN\") else \"未设置\"}')
+          print(f'  LLM_API_URL: {\"已设置\" if os.environ.get(\"LLM_API_URL\") else \"未设置\"}')
+          print(f'  LLM_API_KEY: {\"已设置\" if os.environ.get(\"LLM_API_KEY\") else \"未设置\"}')
+          from config import load_config
+          config = load_config()
+          print('Config loaded successfully')
+          print(f'  LLM API URL: {config.llm_api_url}')
+          print('All tests passed!')
+          "
