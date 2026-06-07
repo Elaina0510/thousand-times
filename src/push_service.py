@@ -11,7 +11,7 @@ from utils import retry
 logger = logging.getLogger("thousand-times")
 
 # PushPlus API 地址
-PUSHPLUS_API = "http://www.pushplus.plus/send"
+PUSHPLUS_API = "https://www.pushplus.plus/send"
 
 
 @retry(max_attempts=3, backoff_factor=2.0)

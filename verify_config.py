@@ -62,7 +62,7 @@ def check_config() -> bool:
 
     pushplus_token = os.environ.get("PUSHPLUS_TOKEN", "")
     if pushplus_token:
-        print(f"  ✅ PUSHPLUS_TOKEN: {pushplus_token[:10]}...")
+        print("  ✅ PUSHPLUS_TOKEN: ***已设置***")
     else:
         print("  ❌ PUSHPLUS_TOKEN: 未设置")
         all_deps_ok = False
@@ -75,7 +75,7 @@ def check_config() -> bool:
 
     llm_api_key = os.environ.get("LLM_API_KEY", "")
     if llm_api_key:
-        print(f"  ✅ LLM_API_KEY: {llm_api_key[:10]}...")
+        print("  ✅ LLM_API_KEY: ***已设置***")
     else:
         print("  ⚠️  LLM_API_KEY: 未设置（政策新闻分析将使用默认评分）")
     print()
