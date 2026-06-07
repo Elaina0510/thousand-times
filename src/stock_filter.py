@@ -21,6 +21,16 @@ def _fetch_stock_spot() -> pd.DataFrame:
     Returns:
         包含股票实时行情的 DataFrame。
     """
+    # 优先使用远程 API
+    try:
+        from remote_data import is_remote_available, get_stock_spot_remote
+        if is_remote_available():
+            logger.info("使用远程 API 获取股票数据")
+            return get_stock_spot_remote()
+    except Exception as e:
+        logger.warning(f"远程 API 调用失败，回退到 AKShare: {e}")
+
+    # 回退到 AKShare
     result: pd.DataFrame = ak.stock_zh_a_spot_em()
     return result
 

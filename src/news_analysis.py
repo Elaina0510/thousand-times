@@ -58,10 +58,19 @@ def fetch_news() -> list[NewsItem]:
         新闻列表，按时间倒序。
     """
     try:
-        import akshare as ak  # type: ignore[import-untyped]
-
-        # 获取财经新闻
-        df = ak.stock_news_em(symbol="财经")
+        # 优先使用远程 API
+        try:
+            from remote_data import is_remote_available, get_news_remote
+            if is_remote_available():
+                logger.info("使用远程 API 获取新闻数据")
+                df = get_news_remote()
+            else:
+                import akshare as ak  # type: ignore[import-untyped]
+                df = ak.stock_news_em(symbol="财经")
+        except Exception as e:
+            logger.warning(f"远程 API 调用失败，回退到 AKShare: {e}")
+            import akshare as ak  # type: ignore[import-untyped]
+            df = ak.stock_news_em(symbol="财经")
 
         if df.empty:
             logger.warning("获取新闻数据为空")

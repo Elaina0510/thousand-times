@@ -46,6 +46,16 @@ def _fetch_stock_hist(code: str, days: int) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
+    # 优先使用远程 API
+    try:
+        from remote_data import is_remote_available, get_stock_hist_remote
+        if is_remote_available():
+            logger.info(f"使用远程 API 获取股票 {code} 历史数据")
+            return get_stock_hist_remote(code, days)
+    except Exception as e:
+        logger.warning(f"远程 API 调用失败，回退到 AKShare: {e}")
+
+    # 回退到 AKShare
     result: pd.DataFrame = ak.stock_zh_a_hist(
         symbol=code,
         period="daily",
@@ -65,6 +75,16 @@ def _fetch_etf_hist(code: str, days: int) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
+    # 优先使用远程 API
+    try:
+        from remote_data import is_remote_available, get_etf_hist_remote
+        if is_remote_available():
+            logger.info(f"使用远程 API 获取 ETF {code} 历史数据")
+            return get_etf_hist_remote(code, days)
+    except Exception as e:
+        logger.warning(f"远程 API 调用失败，回退到 AKShare: {e}")
+
+    # 回退到 AKShare
     result: pd.DataFrame = ak.fund_etf_hist_em(
         symbol=code,
         period="daily",
