@@ -25,6 +25,10 @@ from scoring import ScoreResult, calc_technical_score, calc_total_score, judge_s
 from stock_filter import get_stock_pool
 from technical_analysis import calc_technical_signals, get_kline_data
 
+# 确保日志目录存在
+os.makedirs("logs", exist_ok=True)
+os.makedirs("charts", exist_ok=True)
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
