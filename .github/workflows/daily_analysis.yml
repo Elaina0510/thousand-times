@@ -40,6 +40,9 @@ jobs:
           STOCK_API_URL: ${{ secrets.STOCK_API_URL }}
           PYTHONPATH: ${{ github.workspace }}/src
           CI: true
+          CI_POOL_SIZE: "100"
+          CI_DELAY_MIN: "0.5"
+          CI_DELAY_MAX: "2.0"
         run: |
           echo "Starting analysis..."
           python src/main.py 2>&1 | tee logs/analysis_output.log

@@ -150,4 +150,16 @@ def load_config() -> AppConfig:
     # 从环境变量读取敏感信息
     config.llm_api_url = os.environ.get("LLM_API_URL", "")
     config.llm_api_key = os.environ.get("LLM_API_KEY", "")
+
+    # CI 环境优化：减少股票池大小和延迟时间
+    is_ci = os.environ.get("CI", "false").lower() == "true"
+    if is_ci:
+        # CI 环境使用较小的股票池和较短的延迟
+        ci_pool_size = int(os.environ.get("CI_POOL_SIZE", "50"))
+        ci_delay_min = float(os.environ.get("CI_DELAY_MIN", "0.5"))
+        ci_delay_max = float(os.environ.get("CI_DELAY_MAX", "2.0"))
+
+        config.filter.pool_size = ci_pool_size
+        config.request_delay_range = (ci_delay_min, ci_delay_max)
+
     return config

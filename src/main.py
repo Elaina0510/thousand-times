@@ -187,6 +187,9 @@ def main() -> None:
     # 1. 加载配置
     config = load_config()
     logger.info("配置加载完成")
+    logger.info(f"  股票池大小: {config.filter.pool_size}")
+    logger.info(f"  请求延迟: {config.request_delay_range[0]}-{config.request_delay_range[1]}秒")
+    logger.info(f"  回溯天数: {config.lookback_days}")
 
     # 2. 获取股票池
     logger.info("开始获取股票池...")
