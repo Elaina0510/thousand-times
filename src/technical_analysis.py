@@ -44,22 +44,39 @@ def _fetch_stock_hist_ashare(code: str, days: int) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
+    # 优先使用 BaoStock（更稳定）
+    try:
+        from baostock_data import get_stock_hist_baostock
+        logger.info(f"使用 BaoStock 获取 {code} 历史数据")
+        df = get_stock_hist_baostock(code, days)
+        if not df.empty:
+            return df
+    except Exception as e:
+        logger.warning(f"BaoStock 获取 {code} 失败: {e}")
+
+    # 回退到 Ashare
     try:
         from ashare_data import get_stock_hist_ashare
+        logger.info(f"使用 Ashare 获取 {code} 历史数据")
         df = get_stock_hist_ashare(code, days)
         if not df.empty:
             return df
     except Exception as e:
         logger.warning(f"Ashare 获取 {code} 失败: {e}")
 
-    # 回退到 AKShare
-    import akshare as ak  # type: ignore[import-untyped]
-    result: pd.DataFrame = ak.stock_zh_a_hist(
-        symbol=code,
-        period="daily",
-        adjust="qfq",
-    )
-    return result
+    # 最后回退到 AKShare
+    try:
+        logger.info(f"使用 AKShare 获取 {code} 历史数据")
+        import akshare as ak  # type: ignore[import-untyped]
+        result: pd.DataFrame = ak.stock_zh_a_hist(
+            symbol=code,
+            period="daily",
+            adjust="qfq",
+        )
+        return result
+    except Exception as e:
+        logger.warning(f"AKShare 获取 {code} 失败: {e}")
+        return pd.DataFrame()
 
 
 def _fetch_etf_hist_ashare(code: str, days: int) -> pd.DataFrame:
@@ -72,22 +89,39 @@ def _fetch_etf_hist_ashare(code: str, days: int) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
+    # 优先使用 BaoStock（更稳定）
+    try:
+        from baostock_data import get_etf_hist_baostock
+        logger.info(f"使用 BaoStock 获取 ETF {code} 历史数据")
+        df = get_etf_hist_baostock(code, days)
+        if not df.empty:
+            return df
+    except Exception as e:
+        logger.warning(f"BaoStock 获取 ETF {code} 失败: {e}")
+
+    # 回退到 Ashare
     try:
         from ashare_data import get_etf_hist_ashare
+        logger.info(f"使用 Ashare 获取 ETF {code} 历史数据")
         df = get_etf_hist_ashare(code, days)
         if not df.empty:
             return df
     except Exception as e:
         logger.warning(f"Ashare 获取 ETF {code} 失败: {e}")
 
-    # 回退到 AKShare
-    import akshare as ak  # type: ignore[import-untyped]
-    result: pd.DataFrame = ak.fund_etf_hist_em(
-        symbol=code,
-        period="daily",
-        adjust="qfq",
-    )
-    return result
+    # 最后回退到 AKShare
+    try:
+        logger.info(f"使用 AKShare 获取 ETF {code} 历史数据")
+        import akshare as ak  # type: ignore[import-untyped]
+        result: pd.DataFrame = ak.fund_etf_hist_em(
+            symbol=code,
+            period="daily",
+            adjust="qfq",
+        )
+        return result
+    except Exception as e:
+        logger.warning(f"AKShare 获取 ETF {code} 失败: {e}")
+        return pd.DataFrame()
 
 
 def _calc_ema(series: pd.Series, n: int) -> pd.Series:
@@ -150,7 +184,43 @@ def get_kline_data(code: str, days: int = 60, is_etf: bool = False) -> KlineData
     # 获取历史行情
     df = _fetch_etf_hist_ashare(code, days) if is_etf else _fetch_stock_hist_ashare(code, days)
 
-    random_delay()
+    return _df_to_kline_data(df, code, days)
+
+
+def get_kline_data_from_cache(df: pd.DataFrame, code: str, days: int = 60) -> KlineData:
+    """从缓存的DataFrame获取K线数据并计算技术指标。
+
+    Args:
+        df: 缓存的DataFrame（包含 日期, 开盘, 收盘, 最高, 最低, 成交量 列）。
+        code: 股票代码（用于日志）。
+        days: 回溯天数。
+
+    Returns:
+        KlineData 对象。
+
+    Raises:
+        RuntimeError: 数据获取失败。
+    """
+    if df.empty:
+        raise RuntimeError(f"缓存数据为空: {code}")
+
+    return _df_to_kline_data(df, code, days)
+
+
+def _df_to_kline_data(df: pd.DataFrame, code: str, days: int = 60) -> KlineData:
+    """将DataFrame转换为KlineData对象。
+
+    Args:
+        df: DataFrame（包含日期、开盘、收盘、最高、最低、成交量列）。
+        code: 股票代码（用于日志）。
+        days: 回溯天数。
+
+    Returns:
+        KlineData 对象。
+
+    Raises:
+        RuntimeError: 数据获取失败。
+    """
 
     # 重命名列
     column_mapping = {

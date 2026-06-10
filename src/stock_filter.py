@@ -49,21 +49,94 @@ def _fetch_stock_spot() -> pd.DataFrame:
         logger.warning(f"远程 API 不可用: {e}")
 
     # 回退到 AKShare
-    import akshare as ak  # type: ignore[import-untyped]
-    result: pd.DataFrame = ak.stock_zh_a_spot_em()
-    return result
+    try:
+        import akshare as ak  # type: ignore[import-untyped]
+        logger.info("使用 AKShare 获取股票数据")
+        result: pd.DataFrame = ak.stock_zh_a_spot_em()
+        return result
+    except Exception as e:
+        logger.warning(f"AKShare 获取股票数据失败: {e}")
+        raise
 
 
-@retry(max_attempts=3, backoff_factor=2.0)
-def _fetch_stock_info() -> pd.DataFrame:
-    """获取股票基本信息（含上市日期）（带重试）。
+def _fetch_stock_data_baostock() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """使用 BaoStock 获取全市场股票数据（代码+上市日期）。
+
+    一次登录获取所有数据，避免多次登录/登出导致的连接问题。
 
     Returns:
-        包含股票基本信息的 DataFrame。
+        (spot_df, info_df) 元组：
+        - spot_df: 包含 code, name 列的股票代码 DataFrame
+        - info_df: 包含 代码, 名称, 上市日期 列的股票信息 DataFrame
     """
-    import akshare as ak  # type: ignore[import-untyped]
-    result: pd.DataFrame = ak.stock_info_a_code_name()
-    return result
+    import baostock as bs
+
+    # 登录
+    lg = bs.login()
+    if lg.error_code != '0':
+        logger.error(f"BaoStock 登录失败: {lg.error_msg}")
+        raise RuntimeError(f"BaoStock 登录失败: {lg.error_msg}")
+
+    try:
+        # 获取所有股票代码
+        rs = bs.query_stock_basic()
+        if rs.error_code != '0':
+            logger.error(f"BaoStock 获取股票列表失败: {rs.error_msg}")
+            raise RuntimeError(f"BaoStock 获取股票列表失败: {rs.error_msg}")
+
+        stock_list = []
+        while (rs.error_code == '0') & rs.next():
+            row = rs.get_row_data()
+            stock_list.append(row)
+
+        if not stock_list:
+            logger.warning("BaoStock 返回空股票列表")
+            return pd.DataFrame(), pd.DataFrame()
+
+        # 转换为 DataFrame
+        stock_df = pd.DataFrame(stock_list, columns=rs.fields)
+
+        # 只保留 A 股（sh.6, sz.0, sz.3 开头）
+        a_stock_mask = (
+            stock_df['code'].str.startswith('sh.6') |
+            stock_df['code'].str.startswith('sz.0') |
+            stock_df['code'].str.startswith('sz.3')
+        )
+        stock_df = stock_df[a_stock_mask]
+
+        # 构建 spot DataFrame（只包含 code 和 name）
+        spot_list = []
+        for _, row in stock_df.iterrows():
+            code = row['code'].replace('sh.', '').replace('sz.', '')
+            name = row.get('code_name', '')
+            spot_list.append({
+                'code': code,
+                'name': name,
+            })
+
+        # 构建 info DataFrame（包含代码、名称、上市日期）
+        info_list = []
+        for _, row in stock_df.iterrows():
+            code = row['code'].replace('sh.', '').replace('sz.', '')
+            name = row.get('code_name', '')
+            ipo_date = row.get('ipoDate', '')
+            info_list.append({
+                '代码': code,
+                '名称': name,
+                '上市日期': ipo_date,
+            })
+
+        spot_df = pd.DataFrame(spot_list) if spot_list else pd.DataFrame()
+        info_df = pd.DataFrame(info_list) if info_list else pd.DataFrame()
+
+        logger.info(f"BaoStock 获取 {len(spot_df)} 只股票代码")
+        return spot_df, info_df
+
+    except Exception as e:
+        logger.error(f"BaoStock 获取全市场数据失败: {e}")
+        raise
+    finally:
+        bs.logout()
 
 
 def get_stock_pool(config: FilterConfig) -> pd.DataFrame:
@@ -86,12 +159,40 @@ def get_stock_pool(config: FilterConfig) -> pd.DataFrame:
         按 market_cap 降序，取前 config.pool_size 条。
 
     Raises:
-        RuntimeError: AKShare 接口多次重试后仍失败。
+        RuntimeError: 所有数据源获取失败。
     """
     logger.info("开始获取股票池...")
 
     # 获取全市场实时行情
-    df = _fetch_stock_spot()
+    df = None
+    stock_info = None
+
+    # 优先使用远程 API
+    try:
+        from remote_data import is_remote_available, get_stock_spot_remote
+        if is_remote_available():
+            logger.info("使用远程 API 获取股票数据")
+            df = get_stock_spot_remote()
+    except Exception as e:
+        logger.warning(f"远程 API 不可用: {e}")
+
+    # 回退到 AKShare
+    if df is None:
+        try:
+            import akshare as ak  # type: ignore[import-untyped]
+            logger.info("使用 AKShare 获取股票数据")
+            df = ak.stock_zh_a_spot_em()
+        except Exception as e:
+            logger.warning(f"AKShare 获取股票数据失败: {e}")
+
+    # 最后回退到 BaoStock
+    if df is None or df.empty:
+        logger.info("使用 BaoStock 获取股票数据")
+        df, stock_info = _fetch_stock_data_baostock()
+
+    if df is None or df.empty:
+        raise RuntimeError("所有数据源都获取股票数据失败")
+
     random_delay()
 
     # 重命名列（AKShare 返回的列名可能是中文）
@@ -110,41 +211,70 @@ def get_stock_pool(config: FilterConfig) -> pd.DataFrame:
     df = df.rename(columns=existing_columns)
 
     # 确保必要的列存在
-    required_columns = ["code", "name", "market_cap", "pe_ttm"]
+    required_columns = ["code", "name"]
     for col in required_columns:
         if col not in df.columns:
-            raise ValueError(f"AKShare 返回数据缺少必要列: {col}")
+            raise ValueError(f"数据源返回数据缺少必要列: {col}")
 
-    # 过滤：市值 >= 20亿
-    df = df[df["market_cap"] >= config.min_market_cap]
+    # 过滤：市值 >= 20亿（如果市值数据可用）
+    if "market_cap" in df.columns:
+        df = df[df["market_cap"] >= config.min_market_cap]
+    else:
+        logger.warning("市值数据不可用，跳过市值过滤")
 
     # 过滤：名称不含 "ST"
     df = df[~df["name"].str.contains("ST", case=False, na=False)]
 
-    # 过滤：PE-TTM > 0
-    df = df[df["pe_ttm"] > 0]
+    # 过滤：PE-TTM > 0（如果PE数据可用）
+    if "pe_ttm" in df.columns:
+        df = df[df["pe_ttm"] > 0]
+    else:
+        logger.warning("PE数据不可用，跳过PE过滤")
 
-    # 获取上市日期信息
-    try:
-        stock_info = _fetch_stock_info()
-        random_delay()
+    # 获取上市日期信息（如果 BaoStock 没有提供，则尝试 AKShare）
+    if stock_info is not None and not stock_info.empty:
+        try:
+            random_delay()
 
-        # 重命名列
-        if "上市日期" in stock_info.columns:
-            stock_info = stock_info.rename(columns={"代码": "code", "上市日期": "listing_date"})
-            # 合并上市日期
-            df = df.merge(stock_info[["code", "listing_date"]], on="code", how="left")
+            # 重命名列
+            if "上市日期" in stock_info.columns:
+                stock_info = stock_info.rename(columns={"代码": "code", "上市日期": "listing_date"})
+                # 合并上市日期
+                df = df.merge(stock_info[["code", "listing_date"]], on="code", how="left")
 
-            # 过滤：上市 >= 3个月
-            cutoff_date = datetime.now() - timedelta(days=config.min_listing_months * 30)
-            if "listing_date" in df.columns:
-                df["listing_date"] = pd.to_datetime(df["listing_date"], errors="coerce")
-                df = df[df["listing_date"].isna() | (df["listing_date"] <= cutoff_date)]
-    except Exception as e:
-        logger.warning(f"获取上市日期信息失败，跳过上市时间过滤: {e}")
+                # 过滤：上市 >= 3个月
+                cutoff_date = datetime.now() - timedelta(days=config.min_listing_months * 30)
+                if "listing_date" in df.columns:
+                    df["listing_date"] = pd.to_datetime(df["listing_date"], errors="coerce")
+                    df = df[df["listing_date"].isna() | (df["listing_date"] <= cutoff_date)]
+        except Exception as e:
+            logger.warning(f"处理上市日期信息失败: {e}")
+    else:
+        # 尝试从 AKShare 获取上市日期
+        try:
+            import akshare as ak  # type: ignore[import-untyped]
+            stock_info = ak.stock_info_a_code_name()
+            random_delay()
 
-    # 按市值降序排序
-    df = df.sort_values("market_cap", ascending=False)
+            # 重命名列
+            if "上市日期" in stock_info.columns:
+                stock_info = stock_info.rename(columns={"代码": "code", "上市日期": "listing_date"})
+                # 合并上市日期
+                df = df.merge(stock_info[["code", "listing_date"]], on="code", how="left")
+
+                # 过滤：上市 >= 3个月
+                cutoff_date = datetime.now() - timedelta(days=config.min_listing_months * 30)
+                if "listing_date" in df.columns:
+                    df["listing_date"] = pd.to_datetime(df["listing_date"], errors="coerce")
+                    df = df[df["listing_date"].isna() | (df["listing_date"] <= cutoff_date)]
+        except Exception as e:
+            logger.warning(f"获取上市日期信息失败，跳过上市时间过滤: {e}")
+
+    # 按市值降序排序（如果市值数据可用）
+    if "market_cap" in df.columns:
+        df = df.sort_values("market_cap", ascending=False)
+    else:
+        logger.warning("市值数据不可用，跳过市值排序")
 
     # 取前 pool_size 条
     df = df.head(config.pool_size)

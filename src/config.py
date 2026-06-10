@@ -98,7 +98,7 @@ class FilterConfig:
 
     min_market_cap: float = 20e8  # 最低市值（20亿）
     min_listing_months: int = 3  # 最低上市月数
-    pool_size: int = 1000  # 筛选后保留数量
+    pool_size: int = 200  # 筛选后保留数量（从1000减少到200以提高性能）
 
 
 # 默认ETF池

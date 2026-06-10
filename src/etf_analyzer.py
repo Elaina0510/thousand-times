@@ -5,11 +5,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-import akshare as ak  # type: ignore[import-untyped]
 import pandas as pd
 
 from config import AppConfig
-from utils import random_delay, retry
+from utils import random_delay
 
 logger = logging.getLogger("thousand-times")
 
@@ -24,9 +23,8 @@ class EtfInfo:
     change_pct: float
 
 
-@retry(max_attempts=3, backoff_factor=2.0)
 def _fetch_etf_hist(code: str) -> pd.DataFrame:
-    """获取ETF历史行情（带重试）。
+    """获取ETF历史行情。
 
     Args:
         code: ETF代码。
@@ -34,17 +32,33 @@ def _fetch_etf_hist(code: str) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
-    result: pd.DataFrame = ak.fund_etf_hist_em(
-        symbol=code,
-        period="daily",
-        adjust="qfq",
-    )
-    return result
+    # 优先使用 BaoStock（更稳定）
+    try:
+        from baostock_data import get_etf_hist_baostock
+        logger.info(f"使用 BaoStock 获取 ETF {code} 历史数据")
+        df = get_etf_hist_baostock(code, days=60)
+        if not df.empty:
+            return df
+    except Exception as e:
+        logger.warning(f"BaoStock 获取 ETF {code} 失败: {e}")
+
+    # 回退到 AKShare
+    try:
+        import akshare as ak  # type: ignore[import-untyped]
+        logger.info(f"使用 AKShare 获取 ETF {code} 历史数据")
+        result: pd.DataFrame = ak.fund_etf_hist_em(
+            symbol=code,
+            period="daily",
+            adjust="qfq",
+        )
+        return result
+    except Exception as e:
+        logger.warning(f"AKShare 获取 ETF {code} 失败: {e}")
+        return pd.DataFrame()
 
 
-@retry(max_attempts=3, backoff_factor=2.0)
 def _fetch_etf_fund_daily(code: str) -> pd.DataFrame:
-    """获取ETF份额数据（带重试）。
+    """获取ETF份额数据。
 
     Args:
         code: ETF代码。
@@ -52,8 +66,31 @@ def _fetch_etf_fund_daily(code: str) -> pd.DataFrame:
     Returns:
         包含份额数据的 DataFrame。
     """
-    result: pd.DataFrame = ak.fund_etf_fund_daily_em(symbol=code)
-    return result
+    # BaoStock 不提供份额数据，直接使用 AKShare
+    try:
+        import akshare as ak  # type: ignore[import-untyped]
+        logger.info(f"使用 AKShare 获取 ETF {code} 份额数据")
+        result: pd.DataFrame = ak.fund_etf_fund_daily_em(symbol=code)
+        return result
+    except Exception as e:
+        logger.warning(f"AKShare 获取 ETF {code} 份额数据失败: {e}")
+
+        # 尝试使用 BaoStock 获取历史数据（成交量作为代理）
+        try:
+            from baostock_data import get_etf_hist_baostock
+            logger.info(f"使用 BaoStock 获取 ETF {code} 成交量数据作为代理")
+            df = get_etf_hist_baostock(code, days=60)
+            if not df.empty:
+                # BaoStock 不提供份额数据，但我们可以使用成交量作为代理
+                df = df.rename(columns={
+                    '日期': 'date',
+                    '成交量': 'share_change',
+                })
+                return df
+        except Exception as e2:
+            logger.warning(f"BaoStock 获取 ETF {code} 成交量数据失败: {e2}")
+
+        return pd.DataFrame()
 
 
 def get_etf_pool(config: AppConfig) -> list[EtfInfo]:
@@ -70,17 +107,19 @@ def get_etf_pool(config: AppConfig) -> list[EtfInfo]:
     for code in config.etf_pool:
         try:
             df = _fetch_etf_hist(code)
-            random_delay()
 
             if df.empty:
                 logger.warning(f"ETF {code} 数据为空")
                 continue
 
-            # 重命名列
+            # 重命名列（支持 AKShare 和 BaoStock 两种格式）
             column_mapping = {
                 "名称": "name",
                 "最新价": "close",
                 "涨跌幅": "change_pct",
+                # BaoStock 格式
+                "收盘": "close",
+                "日期": "date",
             }
             existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
             df = df.rename(columns=existing_columns)

@@ -6,13 +6,15 @@ import contextlib
 import logging
 from dataclasses import dataclass
 
-import akshare as ak  # type: ignore[import-untyped]
 import pandas as pd
 
 from config import FundamentalWeightConfig
-from utils import random_delay, retry
+from utils import random_delay
 
 logger = logging.getLogger("thousand-times")
+
+# 全局标志：AKShare 是否可用
+_akshare_available = True
 
 
 @dataclass
@@ -26,9 +28,8 @@ class FundamentalData:
     revenue_growth: float | None  # 营收同比增长率（%）
 
 
-@retry(max_attempts=3, backoff_factor=2.0)
 def _fetch_financial_indicator(code: str) -> pd.DataFrame:
-    """获取个股财务指标（带重试）。
+    """获取个股财务指标。
 
     Args:
         code: 股票代码。
@@ -36,8 +37,23 @@ def _fetch_financial_indicator(code: str) -> pd.DataFrame:
     Returns:
         包含财务指标的 DataFrame。
     """
-    result: pd.DataFrame = ak.stock_financial_analysis_indicator(symbol=code)
-    return result
+    global _akshare_available
+
+    if not _akshare_available:
+        return pd.DataFrame()
+
+    try:
+        import akshare as ak  # type: ignore[import-untyped]
+        logger.info(f"使用 AKShare 获取 {code} 财务指标")
+        result: pd.DataFrame = ak.stock_financial_analysis_indicator(symbol=code)
+        return result
+    except Exception as e:
+        logger.warning(f"AKShare 获取 {code} 财务指标失败: {e}")
+        # 如果是网络错误，标记 AKShare 不可用
+        if "ProxyError" in str(e) or "Connection" in str(e) or "RemoteDisconnected" in str(e):
+            logger.warning("检测到网络问题，后续将跳过 AKShare 财务数据获取")
+            _akshare_available = False
+        return pd.DataFrame()
 
 
 def get_fundamental_data(code: str) -> FundamentalData:
@@ -48,16 +64,12 @@ def get_fundamental_data(code: str) -> FundamentalData:
 
     Returns:
         FundamentalData 对象。
-
-    Raises:
-        RuntimeError: AKShare 接口多次重试后仍失败。
     """
     try:
         df = _fetch_financial_indicator(code)
-        random_delay()
 
         if df.empty:
-            logger.warning(f"股票 {code} 财务数据为空")
+            logger.debug(f"股票 {code} 财务数据为空")
             return FundamentalData(
                 pe_ttm=0.0,
                 pb=0.0,
@@ -116,6 +128,7 @@ def get_fundamental_data(code: str) -> FundamentalData:
 
     except Exception as e:
         logger.warning(f"获取股票 {code} 基本面数据失败: {e}")
+
         return FundamentalData(
             pe_ttm=0.0,
             pb=0.0,

@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -23,7 +24,7 @@ from push_service import push_to_wechat
 from report_generator import generate_report
 from scoring import ScoreResult, calc_technical_score, calc_total_score, judge_score, score_to_probability
 from stock_filter import get_stock_pool
-from technical_analysis import calc_technical_signals, get_kline_data
+from technical_analysis import calc_technical_signals, get_kline_data, get_kline_data_from_cache
 
 # 确保日志目录存在
 os.makedirs("logs", exist_ok=True)
@@ -45,6 +46,7 @@ def analyze_single_stock(
     stock: pd.Series,
     policy_impacts: list[PolicyImpact],
     config: AppConfig,
+    kline_cache: dict[str, pd.DataFrame] | None = None,
 ) -> ScoreResult:
     """分析单只股票。
 
@@ -52,6 +54,7 @@ def analyze_single_stock(
         stock: 股票数据（包含 code, name, market_cap, pe_ttm, pb, industry 等）。
         policy_impacts: 政策影响分析结果。
         config: 应用配置。
+        kline_cache: 预获取的K线数据缓存。
 
     Returns:
         评分结果。
@@ -60,8 +63,11 @@ def analyze_single_stock(
     name = str(stock["name"])
     industry = str(stock.get("industry", ""))
 
-    # 获取K线数据
-    kline = get_kline_data(code, config.lookback_days, is_etf=False)
+    # 获取K线数据（优先使用缓存）
+    if kline_cache is not None and code in kline_cache:
+        kline = get_kline_data_from_cache(kline_cache[code], code)
+    else:
+        kline = get_kline_data(code, config.lookback_days, is_etf=False)
 
     # 技术指标
     signals = calc_technical_signals(kline)
@@ -252,9 +258,16 @@ def main() -> None:
     logger.info("开始分析个股...")
     stock_results: list[ScoreResult] = []
     if stock_pool is not None and not stock_pool.empty:
+        # 预先批量获取所有股票的K线数据（共享BaoStock会话）
+        stock_codes = [str(stock["code"]) for _, stock in stock_pool.iterrows()]
+        logger.info(f"预先批量获取 {len(stock_codes)} 只股票的K线数据...")
+        from baostock_data import get_stock_hist_batch_baostock
+        kline_cache = get_stock_hist_batch_baostock(stock_codes, config.lookback_days)
+        logger.info(f"K线数据预获取完成，成功 {sum(1 for v in kline_cache.values() if not v.empty)} 只")
+
         for idx, (_, stock) in enumerate(stock_pool.iterrows()):
             try:
-                result = analyze_single_stock(stock, policy_impacts, config)
+                result = analyze_single_stock(stock, policy_impacts, config, kline_cache)
                 if (
                     result.total_score >= config.score_threshold_high
                     or result.total_score < config.score_threshold_low
