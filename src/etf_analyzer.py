@@ -93,6 +93,22 @@ def _fetch_etf_fund_daily(code: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# ETF 名称映射表
+ETF_NAME_MAP: dict[str, str] = {
+    "510300": "沪深300ETF",
+    "510500": "中证500ETF",
+    "159915": "创业板ETF",
+    "588000": "科创50ETF",
+    "512480": "半导体ETF",
+    "516160": "新能源ETF",
+    "512010": "医药ETF",
+    "159928": "消费ETF",
+    "512660": "军工ETF",
+    "510230": "金融ETF",
+    "512200": "地产ETF",
+}
+
+
 def get_etf_pool(config: AppConfig) -> list[EtfInfo]:
     """获取ETF池中各ETF的当前行情。
 
@@ -127,7 +143,8 @@ def get_etf_pool(config: AppConfig) -> list[EtfInfo]:
             # 获取最新数据
             latest = df.iloc[-1]
 
-            name = str(latest.get("name", f"ETF_{code}"))
+            # 优先使用映射表中的名称
+            name = ETF_NAME_MAP.get(code, str(latest.get("name", f"ETF_{code}")))
             current_price = float(latest.get("close", 0.0))
             change_pct = float(latest.get("change_pct", 0.0))
 
