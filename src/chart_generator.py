@@ -17,6 +17,40 @@ from technical_analysis import KlineData
 
 logger = logging.getLogger("thousand-times")
 
+# 配置中文字体
+def _setup_chinese_font() -> None:
+    """设置中文字体支持。"""
+    import matplotlib.font_manager as fm
+
+    # 尝试查找系统中可用的中文字体
+    chinese_fonts = [
+        'WenQuanYi Zen Hei',
+        'WenQuanYi Micro Hei',
+        'SimHei',
+        'Microsoft YaHei',
+        'STSong',
+        'STHeiti',
+        'PingFang SC',
+        'Noto Sans CJK SC',
+        'Source Han Sans CN',
+    ]
+
+    available_fonts = [f.name for f in fm.fontManager.ttflist]
+
+    for font_name in chinese_fonts:
+        if font_name in available_fonts:
+            plt.rcParams['font.sans-serif'] = [font_name] + plt.rcParams['font.sans-serif']
+            plt.rcParams['axes.unicode_minus'] = False
+            logger.info(f"使用中文字体: {font_name}")
+            return
+
+    # 如果没有找到中文字体，尝试使用系统默认
+    logger.warning("未找到中文字体，图表中文可能显示异常")
+    plt.rcParams['axes.unicode_minus'] = False
+
+# 初始化字体
+_setup_chinese_font()
+
 # 图表样式配置
 CHART_STYLE: dict[str, Any] = {
     "figsize": (12, 8),

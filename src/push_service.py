@@ -50,12 +50,19 @@ def push_to_wechat(
         response = requests.post(PUSHPLUS_API, json=payload, timeout=30)
         result = response.json()
 
+        logger.info(f"PushPlus 响应: code={result.get('code')}, msg={result.get('msg')}")
+
         if result.get("code") == 200:
             logger.info(f"推送成功: {title}")
             return True
         else:
             error_msg = result.get("msg", "未知错误")
-            logger.error(f"推送失败: {error_msg}")
+            logger.error(f"推送失败: {error_msg} (code={result.get('code')})")
+
+            # Token 无效时给出提示
+            if "token" in error_msg.lower() or result.get("code") in [400, 401]:
+                logger.error("请检查 PUSHPLUS_TOKEN 是否正确，可在 https://www.pushplus.plus/ 获取")
+
             return False
 
     except requests.Timeout as e:
