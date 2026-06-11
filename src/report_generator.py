@@ -149,6 +149,8 @@ def generate_report(
     etf_results: list[ScoreResult],
     policy_impacts: list[PolicyImpact],
     report_date: str,
+    max_recommend: int = 10,
+    max_risk: int = 5,
 ) -> str:
     """生成推送报告文本。
 
@@ -157,6 +159,8 @@ def generate_report(
         etf_results: ETF评分结果（已筛选，仅包含推送项）。
         policy_impacts: 政策影响分析结果。
         report_date: 报告日期。
+        max_recommend: 最大推荐股票数量。
+        max_risk: 最大风险警示股票数量。
 
     Returns:
         Markdown格式的推送文本。
@@ -172,6 +176,12 @@ def generate_report(
     stock_risk.sort(key=lambda x: x.total_score)
     etf_recommend.sort(key=lambda x: x.total_score, reverse=True)
     etf_risk.sort(key=lambda x: x.total_score)
+
+    # 限制数量
+    stock_recommend = stock_recommend[:max_recommend]
+    stock_risk = stock_risk[:max_risk]
+    etf_recommend = etf_recommend[:max_recommend]
+    etf_risk = etf_risk[:max_risk]
 
     sections: list[str] = []
 
