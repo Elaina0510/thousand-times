@@ -1,10 +1,10 @@
 name: Daily Stock Analysis
 
 on:
-  # 定时调度：工作日北京时间12:00（UTC 04:00）
+  # 定时调度：工作日北京时间11:45（UTC 03:45）
   # 使用非整点时间避免 GitHub Actions 调度延迟
   schedule:
-    - cron: '17 4 * * 1-5'
+    - cron: '45 3 * * 1-5'
   # 支持手动触发
   workflow_dispatch:
 

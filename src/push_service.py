@@ -47,6 +47,9 @@ def push_to_wechat(
     }
 
     try:
+        # 记录请求信息（不包含 token）
+        logger.info(f"PushPlus 请求: title={title}, template={template}, content_length={len(content)}")
+
         response = requests.post(PUSHPLUS_API, json=payload, timeout=30)
         result = response.json()
 
@@ -59,8 +62,13 @@ def push_to_wechat(
             error_msg = result.get("msg", "未知错误")
             logger.error(f"推送失败: {error_msg} (code={result.get('code')})")
 
-            # Token 无效时给出提示
-            if "token" in error_msg.lower() or result.get("code") in [400, 401]:
+            # 详细的错误提示
+            if result.get("code") == 999:
+                logger.error("错误码 999 可能原因:")
+                logger.error("1. Token 无效或过期，请登录 https://www.pushplus.plus/ 检查")
+                logger.error("2. 推送内容过长（当前长度: {} 字符）".format(len(content)))
+                logger.error("3. PushPlus 服务端临时故障")
+            elif "token" in error_msg.lower() or result.get("code") in [400, 401]:
                 logger.error("请检查 PUSHPLUS_TOKEN 是否正确，可在 https://www.pushplus.plus/ 获取")
 
             return False
