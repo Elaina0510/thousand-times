@@ -149,8 +149,12 @@ def get_industry_trend_score(
     Returns:
         评分（0~10分）。
     """
-    # 行业→ETF映射表
+    if not industry:
+        return config.industry_trend_weight.sideways
+
+    # 行业→ETF映射表（支持多种格式）
     industry_etf_map: dict[str, str] = {
+        # 中文行业名称
         "半导体": "512480",
         "芯片": "512480",
         "新能源": "516160",
@@ -168,10 +172,38 @@ def get_industry_trend_score(
         "证券": "510230",
         "地产": "512200",
         "房地产": "512200",
+        # BaoStock 证监会行业分类关键词
+        "计算机": "512480",
+        "通信": "512480",
+        "电子": "512480",
+        "软件": "512480",
+        "信息": "512480",
+        "医药制造": "512010",
+        "医疗": "512010",
+        "食品": "159928",
+        "饮料": "159928",
+        "酒": "159928",
+        "航空航天": "512660",
+        "保险": "510230",
+        "证券期货": "510230",
+        "建筑": "512200",
     }
 
-    # 查找对应的ETF
-    etf_code = industry_etf_map.get(industry)
+    # 清理行业名称（去除 BaoStock 格式前缀，如 "J66货币金融服务" → "货币金融服务"）
+    clean_industry = industry
+    if len(industry) > 3 and industry[0].isalpha() and industry[1:3].isdigit():
+        clean_industry = industry[3:]
+
+    # 查找对应的ETF（精确匹配）
+    etf_code = industry_etf_map.get(clean_industry)
+
+    # 模糊匹配
+    if etf_code is None:
+        for key, value in industry_etf_map.items():
+            if key in clean_industry or clean_industry in key:
+                etf_code = value
+                break
+
     if etf_code is None or etf_code not in etf_pool:
         # 无法匹配行业，默认横盘评分
         return config.industry_trend_weight.sideways
