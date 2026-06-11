@@ -60,13 +60,13 @@ def _fetch_stock_spot() -> pd.DataFrame:
 
 
 def _fetch_stock_data_baostock() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """使用 BaoStock 获取全市场股票数据（代码+上市日期）。
+    """使用 BaoStock 获取全市场股票数据（代码+上市日期+行业）。
 
     一次登录获取所有数据，避免多次登录/登出导致的连接问题。
 
     Returns:
         (spot_df, info_df) 元组：
-        - spot_df: 包含 code, name 列的股票代码 DataFrame
+        - spot_df: 包含 code, name, industry 列的股票代码 DataFrame
         - info_df: 包含 代码, 名称, 上市日期 列的股票信息 DataFrame
     """
     import baostock as bs
@@ -104,14 +104,31 @@ def _fetch_stock_data_baostock() -> tuple[pd.DataFrame, pd.DataFrame]:
         )
         stock_df = stock_df[a_stock_mask]
 
-        # 构建 spot DataFrame（只包含 code 和 name）
+        # 获取行业信息
+        industry_dict = {}
+        try:
+            rs_industry = bs.query_stock_industry()
+            if rs_industry.error_code == '0':
+                while (rs_industry.error_code == '0') & rs_industry.next():
+                    row = rs_industry.get_row_data()
+                    if len(row) >= 4:
+                        code = row[1].replace('sh.', '').replace('sz.', '')
+                        industry = row[3] if row[3] else ''
+                        industry_dict[code] = industry
+                logger.info(f"获取到 {len(industry_dict)} 只股票的行业信息")
+        except Exception as e:
+            logger.warning(f"获取行业信息失败: {e}")
+
+        # 构建 spot DataFrame（包含 code, name, industry）
         spot_list = []
         for _, row in stock_df.iterrows():
             code = row['code'].replace('sh.', '').replace('sz.', '')
             name = row.get('code_name', '')
+            industry = industry_dict.get(code, '')
             spot_list.append({
                 'code': code,
                 'name': name,
+                'industry': industry,
             })
 
         # 构建 info DataFrame（包含代码、名称、上市日期）

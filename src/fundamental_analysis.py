@@ -39,6 +39,59 @@ def _fetch_financial_indicator(code: str) -> pd.DataFrame:
     """
     global _akshare_available
 
+    # 优先使用 BaoStock（更稳定）
+    try:
+        import baostock as bs
+        logger.info(f"使用 BaoStock 获取 {code} 财务指标")
+
+        # 登录
+        lg = bs.login()
+        if lg.error_code != '0':
+            logger.warning(f"BaoStock 登录失败: {lg.error_msg}")
+            raise RuntimeError(f"BaoStock 登录失败: {lg.error_msg}")
+
+        try:
+            # 转换代码格式
+            if code.startswith('6') or code.startswith('5'):
+                bs_code = f'sh.{code}'
+            else:
+                bs_code = f'sz.{code}'
+
+            from datetime import datetime
+            current_year = datetime.now().year
+            current_quarter = (datetime.now().month - 1) // 3 + 1
+
+            # 尝试最近几个季度
+            for year in [current_year, current_year - 1]:
+                for quarter in [current_quarter, 4, 3, 2, 1]:
+                    if year == current_year and quarter > current_quarter:
+                        continue
+
+                    # 获取盈利能力数据
+                    rs = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
+                    if rs.error_code != '0':
+                        continue
+
+                    data_list = []
+                    while (rs.error_code == '0') & rs.next():
+                        data_list.append(rs.get_row_data())
+
+                    if data_list:
+                        # 转换为 DataFrame
+                        df = pd.DataFrame(data_list, columns=rs.fields)
+                        logger.info(f"BaoStock 获取 {code} 财务数据成功（{year}Q{quarter}）")
+                        return df
+
+            logger.warning(f"BaoStock 未找到 {code} 的财务数据")
+            return pd.DataFrame()
+
+        finally:
+            bs.logout()
+
+    except Exception as e:
+        logger.warning(f"BaoStock 获取 {code} 财务指标失败: {e}")
+
+    # 回退到 AKShare
     if not _akshare_available:
         return pd.DataFrame()
 
@@ -81,42 +134,60 @@ def get_fundamental_data(code: str) -> FundamentalData:
         # 获取最新一行数据
         latest = df.iloc[0]
 
-        # 提取数据（列名可能是中文）
+        # 提取数据
         pe_ttm = 0.0
         pb = 0.0
         profit_growth = None
         revenue_growth = None
 
-        # 尝试不同的列名
-        for col_name in ["摊薄每股收益", "每股收益"]:
-            if col_name in df.columns:
-                with contextlib.suppress(ValueError, TypeError):
-                    pe_ttm = float(latest[col_name]) if pd.notna(latest[col_name]) else 0.0
-                break
+        # BaoStock 格式处理
+        if 'epsTTM' in df.columns:
+            # BaoStock 返回的格式
+            with contextlib.suppress(ValueError, TypeError):
+                eps = float(latest.get('epsTTM', 0)) if pd.notna(latest.get('epsTTM')) else 0
+                # PE = 股价 / EPS，但这里我们没有股价，所以使用 ROE 作为替代评分
+                pe_ttm = eps  # 保存 EPS 用于后续计算
 
-        for col_name in ["净资产收益率", "加权净资产收益率"]:
-            if col_name in df.columns:
-                with contextlib.suppress(ValueError, TypeError):
-                    pb = float(latest[col_name]) if pd.notna(latest[col_name]) else 0.0
-                break
+            with contextlib.suppress(ValueError, TypeError):
+                roe = float(latest.get('roeAvg', 0)) if pd.notna(latest.get('roeAvg')) else 0
+                pb = roe  # 使用 ROE 作为 PB 的替代评分
 
-        # 净利润同比增长率
-        for col_name in ["净利润同比增长率", "归属净利润同比", "净利润同比"]:
-            if col_name in df.columns:
-                with contextlib.suppress(ValueError, TypeError):
-                    val = latest[col_name]
-                    if pd.notna(val):
-                        profit_growth = float(val)
-                break
+            # BaoStock 没有直接的增长率数据，需要计算
+            # 这里我们返回默认值
+            profit_growth = None
+            revenue_growth = None
+        else:
+            # AKShare 格式处理
+            # 尝试不同的列名
+            for col_name in ["摊薄每股收益", "每股收益"]:
+                if col_name in df.columns:
+                    with contextlib.suppress(ValueError, TypeError):
+                        pe_ttm = float(latest[col_name]) if pd.notna(latest[col_name]) else 0.0
+                    break
 
-        # 营收同比增长率
-        for col_name in ["营收同比增长率", "营业收入同比", "营收同比"]:
-            if col_name in df.columns:
-                with contextlib.suppress(ValueError, TypeError):
-                    val = latest[col_name]
-                    if pd.notna(val):
-                        revenue_growth = float(val)
-                break
+            for col_name in ["净资产收益率", "加权净资产收益率"]:
+                if col_name in df.columns:
+                    with contextlib.suppress(ValueError, TypeError):
+                        pb = float(latest[col_name]) if pd.notna(latest[col_name]) else 0.0
+                    break
+
+            # 净利润同比增长率
+            for col_name in ["净利润同比增长率", "归属净利润同比", "净利润同比"]:
+                if col_name in df.columns:
+                    with contextlib.suppress(ValueError, TypeError):
+                        val = latest[col_name]
+                        if pd.notna(val):
+                            profit_growth = float(val)
+                    break
+
+            # 营收同比增长率
+            for col_name in ["营收同比增长率", "营业收入同比", "营收同比"]:
+                if col_name in df.columns:
+                    with contextlib.suppress(ValueError, TypeError):
+                        val = latest[col_name]
+                        if pd.notna(val):
+                            revenue_growth = float(val)
+                    break
 
         return FundamentalData(
             pe_ttm=pe_ttm,
