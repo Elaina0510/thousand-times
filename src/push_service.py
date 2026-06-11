@@ -39,6 +39,12 @@ def push_to_wechat(
     if not token:
         raise ValueError("PushPlus Token 不能为空")
 
+    # PushPlus 内容长度限制（约 20000 字符）
+    MAX_CONTENT_LENGTH = 19000
+    if len(content) > MAX_CONTENT_LENGTH:
+        logger.warning(f"推送内容过长（{len(content)} 字符），将截断至 {MAX_CONTENT_LENGTH} 字符")
+        content = content[:MAX_CONTENT_LENGTH] + "\n\n... (内容过长已截断)"
+
     payload = {
         "token": token,
         "title": title,
