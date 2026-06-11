@@ -308,7 +308,7 @@ def get_industry_impact_score(
     """获取某行业的政策影响综合评分。
 
     Args:
-        industry: 行业名称。
+        industry: 行业名称（支持 BaoStock 格式如 "J66货币金融服务"）。
         impacts: 所有政策影响分析结果。
 
     Returns:
@@ -317,12 +317,34 @@ def get_industry_impact_score(
     if not impacts:
         return 5.0  # 默认中性
 
+    # 清理行业名称（去除 BaoStock 格式前缀）
+    clean_industry = industry
+    if len(industry) > 3 and industry[0].isalpha() and industry[1:3].isdigit():
+        clean_industry = industry[3:]
+
     total_score = 0.0
     count = 0
 
     for impact in impacts:
         # 检查行业是否在受影响行业中
-        if industry in impact.affected_industries or "整体市场" in impact.affected_industries:
+        matched = False
+        for affected in impact.affected_industries:
+            # 精确匹配
+            if clean_industry == affected or industry == affected:
+                matched = True
+                break
+            # 模糊匹配（双向包含）
+            if clean_industry in affected or affected in clean_industry:
+                matched = True
+                break
+            # 关键词匹配（去除"业"、"服务"等后缀）
+            clean1 = clean_industry.replace("业", "").replace("服务", "").replace("制造", "")
+            clean2 = affected.replace("业", "").replace("服务", "").replace("制造", "")
+            if clean1 and clean2 and (clean1 in clean2 or clean2 in clean1):
+                matched = True
+                break
+
+        if matched or "整体市场" in impact.affected_industries:
             total_score += impact.impact_score
             count += 1
 
