@@ -91,10 +91,30 @@ def analyze_single_stock(
         None, False, config.score_weight,
     )
 
-    # 生成新闻摘要
+    # 生成新闻摘要（支持 BaoStock 行业格式匹配）
     news_summary = ""
+    # 清理行业名称（去除 BaoStock 格式前缀）
+    clean_industry = industry
+    if len(industry) > 3 and industry[0].isalpha() and industry[1:3].isdigit():
+        clean_industry = industry[3:]
+
     for impact in policy_impacts:
-        if industry in impact.affected_industries or "整体市场" in impact.affected_industries:
+        matched = False
+        for affected in impact.affected_industries:
+            if clean_industry == affected or industry == affected:
+                matched = True
+                break
+            if clean_industry in affected or affected in clean_industry:
+                matched = True
+                break
+            # 关键词匹配
+            clean1 = clean_industry.replace("业", "").replace("服务", "").replace("制造", "")
+            clean2 = affected.replace("业", "").replace("服务", "").replace("制造", "")
+            if clean1 and clean2 and (clean1 in clean2 or clean2 in clean1):
+                matched = True
+                break
+
+        if matched or "整体市场" in impact.affected_industries:
             news_summary = impact.summary
             break
 

@@ -131,8 +131,8 @@ class AppConfig:
     industry_trend_weight: IndustryTrendWeightConfig = field(default_factory=IndustryTrendWeightConfig)
     etf_fund_flow_weight: EtfFundFlowWeightConfig = field(default_factory=EtfFundFlowWeightConfig)
     etf_pool: list[str] = field(default_factory=lambda: list(DEFAULT_ETF_POOL))
-    score_threshold_high: float = 70.0
-    score_threshold_low: float = 30.0
+    score_threshold_high: float = 50.0  # 推荐阈值（原70太高，导致无推荐）
+    score_threshold_low: float = 20.0   # 风险阈值（原30太高，导致太多风险警示）
     request_delay_range: tuple[float, float] = (1.0, 5.0)
     max_retries: int = 3
     lookback_days: int = 60
