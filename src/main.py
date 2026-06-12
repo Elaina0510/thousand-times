@@ -92,6 +92,7 @@ def analyze_single_stock(
     )
 
     # 生成新闻摘要（支持 BaoStock 行业格式匹配）
+    from news_analysis import _match_industry
     news_summary = ""
     # 清理行业名称（去除 BaoStock 格式前缀）
     clean_industry = industry
@@ -101,16 +102,7 @@ def analyze_single_stock(
     for impact in policy_impacts:
         matched = False
         for affected in impact.affected_industries:
-            if clean_industry == affected or industry == affected:
-                matched = True
-                break
-            if clean_industry in affected or affected in clean_industry:
-                matched = True
-                break
-            # 关键词匹配
-            clean1 = clean_industry.replace("业", "").replace("服务", "").replace("制造", "")
-            clean2 = affected.replace("业", "").replace("服务", "").replace("制造", "")
-            if clean1 and clean2 and (clean1 in clean2 or clean2 in clean1):
+            if _match_industry(clean_industry, affected):
                 matched = True
                 break
 

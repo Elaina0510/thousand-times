@@ -301,6 +301,47 @@ def _default_impacts(news: list[NewsItem]) -> list[PolicyImpact]:
     ]
 
 
+def _extract_industry_keyword(industry: str) -> str:
+    """提取行业关键词（去除后缀）。
+
+    Args:
+        industry: 行业名称。
+
+    Returns:
+        关键词。
+    """
+    for suffix in ['业', '服务', '制造', '加工', '开采', '销售', '管理', '供应']:
+        industry = industry.replace(suffix, '')
+    return industry
+
+
+def _match_industry(clean_industry: str, affected: str) -> bool:
+    """判断两个行业名称是否匹配。
+
+    Args:
+        clean_industry: 清理后的行业名称。
+        affected: 受影响的行业名称。
+
+    Returns:
+        是否匹配。
+    """
+    # 精确匹配
+    if clean_industry == affected:
+        return True
+
+    # 模糊匹配（双向包含）
+    if clean_industry in affected or affected in clean_industry:
+        return True
+
+    # 关键词匹配
+    kw1 = _extract_industry_keyword(clean_industry)
+    kw2 = _extract_industry_keyword(affected)
+    if kw1 and kw2 and (kw1 in kw2 or kw2 in kw1):
+        return True
+
+    return False
+
+
 def get_industry_impact_score(
     industry: str,
     impacts: list[PolicyImpact],
@@ -329,18 +370,7 @@ def get_industry_impact_score(
         # 检查行业是否在受影响行业中
         matched = False
         for affected in impact.affected_industries:
-            # 精确匹配
-            if clean_industry == affected or industry == affected:
-                matched = True
-                break
-            # 模糊匹配（双向包含）
-            if clean_industry in affected or affected in clean_industry:
-                matched = True
-                break
-            # 关键词匹配（去除"业"、"服务"等后缀）
-            clean1 = clean_industry.replace("业", "").replace("服务", "").replace("制造", "")
-            clean2 = affected.replace("业", "").replace("服务", "").replace("制造", "")
-            if clean1 and clean2 and (clean1 in clean2 or clean2 in clean1):
+            if _match_industry(clean_industry, affected):
                 matched = True
                 break
 
