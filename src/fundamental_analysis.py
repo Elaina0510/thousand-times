@@ -28,8 +28,94 @@ class FundamentalData:
     revenue_growth: float | None  # 营收同比增长率（%）
 
 
+def _fetch_single_with_session(bs, code: str, current_year: int, current_quarter: int) -> dict:
+    """在已有 BaoStock 会话中获取单只股票的财务指标。
+
+    Args:
+        bs: 已登录的 baostock 模块。
+        code: 股票代码。
+        current_year: 当前年份。
+        current_quarter: 当前季度。
+
+    Returns:
+        包含财务指标的字典，失败返回空字典。
+    """
+    try:
+        # 转换代码格式
+        if code.startswith('6') or code.startswith('5'):
+            bs_code = f'sh.{code}'
+        else:
+            bs_code = f'sz.{code}'
+
+        result = {}
+
+        # 尝试最近几个季度
+        for year in [current_year, current_year - 1]:
+            for quarter in [current_quarter, 4, 3, 2, 1]:
+                if year == current_year and quarter > current_quarter:
+                    continue
+
+                # 获取盈利能力数据
+                rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
+                if rs_profit.error_code == '0':
+                    profit_list = []
+                    while (rs_profit.error_code == '0') & rs_profit.next():
+                        profit_list.append(rs_profit.get_row_data())
+
+                    if profit_list:
+                        latest = profit_list[-1]
+                        fields = rs_profit.fields
+
+                        # 提取 EPS 和 ROE
+                        if 'epsTTM' in fields:
+                            eps_idx = fields.index('epsTTM')
+                            result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
+
+                        if 'roeAvg' in fields:
+                            roe_idx = fields.index('roeAvg')
+                            result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
+
+                        logger.debug(f"BaoStock 获取 {code} 盈利数据成功（{year}Q{quarter}）")
+
+                # 获取成长能力数据
+                rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
+                if rs_growth.error_code == '0':
+                    growth_list = []
+                    while (rs_growth.error_code == '0') & rs_growth.next():
+                        growth_list.append(rs_growth.get_row_data())
+
+                    if growth_list:
+                        latest = growth_list[-1]
+                        fields = rs_growth.fields
+
+                        # 提取净利润同比增长率
+                        if 'YOYNI' in fields:
+                            yoy_ni_idx = fields.index('YOYNI')
+                            val = latest[yoy_ni_idx]
+                            if val:
+                                result['profit_growth'] = float(val) * 100  # 转换为百分比
+
+                        # 提取营收同比增长率
+                        if 'YOYPNI' in fields:
+                            yoy_pni_idx = fields.index('YOYPNI')
+                            val = latest[yoy_pni_idx]
+                            if val:
+                                result['revenue_growth'] = float(val) * 100  # 转换为百分比
+
+                        logger.debug(f"BaoStock 获取 {code} 成长数据成功（{year}Q{quarter}）")
+
+                if result:
+                    return result
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"BaoStock 获取 {code} 财务指标失败: {e}")
+        return {}
+
+
 def _fetch_financial_indicator(code: str) -> dict:
-    """获取个股财务指标（使用 BaoStock）。
+    """获取个股财务指标（使用 BaoStock，单次登录）。
 
     Args:
         code: 股票代码。
@@ -48,83 +134,81 @@ def _fetch_financial_indicator(code: str) -> dict:
             return {}
 
         try:
-            # 转换代码格式
-            if code.startswith('6') or code.startswith('5'):
-                bs_code = f'sh.{code}'
-            else:
-                bs_code = f'sz.{code}'
-
             current_year = datetime.now().year
             current_quarter = (datetime.now().month - 1) // 3 + 1
-
-            result = {}
-
-            # 尝试最近几个季度
-            for year in [current_year, current_year - 1]:
-                for quarter in [current_quarter, 4, 3, 2, 1]:
-                    if year == current_year and quarter > current_quarter:
-                        continue
-
-                    # 获取盈利能力数据
-                    rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
-                    if rs_profit.error_code == '0':
-                        profit_list = []
-                        while (rs_profit.error_code == '0') & rs_profit.next():
-                            profit_list.append(rs_profit.get_row_data())
-
-                        if profit_list:
-                            latest = profit_list[-1]
-                            fields = rs_profit.fields
-
-                            # 提取 EPS 和 ROE
-                            if 'epsTTM' in fields:
-                                eps_idx = fields.index('epsTTM')
-                                result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
-
-                            if 'roeAvg' in fields:
-                                roe_idx = fields.index('roeAvg')
-                                result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
-
-                            logger.debug(f"BaoStock 获取 {code} 盈利数据成功（{year}Q{quarter}）")
-
-                    # 获取成长能力数据
-                    rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
-                    if rs_growth.error_code == '0':
-                        growth_list = []
-                        while (rs_growth.error_code == '0') & rs_growth.next():
-                            growth_list.append(rs_growth.get_row_data())
-
-                        if growth_list:
-                            latest = growth_list[-1]
-                            fields = rs_growth.fields
-
-                            # 提取净利润同比增长率
-                            if 'YOYNI' in fields:
-                                yoy_ni_idx = fields.index('YOYNI')
-                                val = latest[yoy_ni_idx]
-                                if val:
-                                    result['profit_growth'] = float(val) * 100  # 转换为百分比
-
-                            # 提取营收同比增长率
-                            if 'YOYPNI' in fields:
-                                yoy_pni_idx = fields.index('YOYPNI')
-                                val = latest[yoy_pni_idx]
-                                if val:
-                                    result['revenue_growth'] = float(val) * 100  # 转换为百分比
-
-                            logger.debug(f"BaoStock 获取 {code} 成长数据成功（{year}Q{quarter}）")
-
-                    if result:
-                        return result
-
-            return result
-
+            return _fetch_single_with_session(bs, code, current_year, current_quarter)
         finally:
             bs.logout()
 
     except Exception as e:
         logger.warning(f"BaoStock 获取 {code} 财务指标失败: {e}")
         return {}
+
+
+def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
+    """批量获取多只股票的基本面数据（共享单个 BaoStock 会话）。
+
+    Args:
+        codes: 股票代码列表。
+
+    Returns:
+        字典，键为股票代码，值为 FundamentalData 对象。
+    """
+    from datetime import datetime
+
+    empty_data = FundamentalData(
+        pe_ttm=0.0, pb=0.0, market_cap=0.0,
+        profit_growth=None, revenue_growth=None,
+    )
+
+    if not codes:
+        return {}
+
+    try:
+        import baostock as bs
+
+        lg = bs.login()
+        if lg.error_code != '0':
+            logger.warning(f"BaoStock 登录失败: {lg.error_msg}")
+            return {code: empty_data for code in codes}
+
+        try:
+            current_year = datetime.now().year
+            current_quarter = (datetime.now().month - 1) // 3 + 1
+            results: dict[str, FundamentalData] = {}
+
+            for code in codes:
+                try:
+                    data = _fetch_single_with_session(bs, code, current_year, current_quarter)
+
+                    if not data:
+                        results[code] = empty_data
+                        continue
+
+                    roe = data.get('roeAvg', 0)
+                    eps = data.get('epsTTM', 0)
+                    profit_growth = data.get('profit_growth')
+                    revenue_growth = data.get('revenue_growth')
+
+                    results[code] = FundamentalData(
+                        pe_ttm=roe * 100,  # ROE 转换为百分比，用作 pe_ttm 代理
+                        pb=eps,  # EPS 用作 pb 代理
+                        market_cap=0.0,
+                        profit_growth=profit_growth,
+                        revenue_growth=revenue_growth,
+                    )
+                except Exception as e:
+                    logger.warning(f"获取 {code} 基本面数据失败: {e}")
+                    results[code] = empty_data
+
+            return results
+
+        finally:
+            bs.logout()
+
+    except Exception as e:
+        logger.warning(f"BaoStock 批量获取基本面数据失败: {e}")
+        return {code: empty_data for code in codes}
 
 
 def get_fundamental_data(code: str) -> FundamentalData:

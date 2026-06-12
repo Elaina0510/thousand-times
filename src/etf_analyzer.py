@@ -228,7 +228,7 @@ def get_etf_fund_flow(code: str, days: int = 5) -> float:
     """
     try:
         df = _fetch_etf_fund_daily(code)
-        random_delay()
+        random_delay(0.2, 1.0)
 
         if df.empty:
             logger.warning(f"ETF {code} 份额数据为空")

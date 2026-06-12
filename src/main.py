@@ -15,10 +15,12 @@ load_dotenv()
 
 import pandas as pd
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from chart_generator import generate_chart
 from config import AppConfig, load_config
 from etf_analyzer import EtfInfo, get_etf_fund_flow, get_etf_pool
-from fundamental_analysis import calc_fundamental_score, get_fundamental_data
+from fundamental_analysis import calc_fundamental_score, get_fundamental_data, get_fundamental_data_batch
 from news_analysis import PolicyImpact, analyze_policy_impact, fetch_news, filter_by_credibility
 from push_service import push_to_wechat
 from report_generator import generate_report
@@ -47,6 +49,7 @@ def analyze_single_stock(
     policy_impacts: list[PolicyImpact],
     config: AppConfig,
     kline_cache: dict[str, pd.DataFrame] | None = None,
+    fund_cache: dict[str, any] | None = None,
 ) -> ScoreResult:
     """分析单只股票。
 
@@ -55,6 +58,7 @@ def analyze_single_stock(
         policy_impacts: 政策影响分析结果。
         config: 应用配置。
         kline_cache: 预获取的K线数据缓存。
+        fund_cache: 预获取的基本面数据缓存。
 
     Returns:
         评分结果。
@@ -73,8 +77,11 @@ def analyze_single_stock(
     signals = calc_technical_signals(kline)
     tech_score = calc_technical_score(signals, config.technical_weight)
 
-    # 基本面
-    fund_data = get_fundamental_data(code)
+    # 基本面（优先使用缓存）
+    if fund_cache is not None and code in fund_cache:
+        fund_data = fund_cache[code]
+    else:
+        fund_data = get_fundamental_data(code)
     fund_score = calc_fundamental_score(fund_data, config.fundamental_weight)
 
     # 政策新闻
@@ -131,6 +138,7 @@ def analyze_single_etf(
     etf: EtfInfo,
     policy_impacts: list[PolicyImpact],
     config: AppConfig,
+    kline_cache: dict[str, pd.DataFrame] | None = None,
 ) -> ScoreResult:
     """分析单只ETF。
 
@@ -138,6 +146,7 @@ def analyze_single_etf(
         etf: ETF信息。
         policy_impacts: 政策影响分析结果。
         config: 应用配置。
+        kline_cache: 预获取的K线数据缓存。
 
     Returns:
         评分结果。
@@ -145,8 +154,11 @@ def analyze_single_etf(
     code = etf.code
     name = etf.name
 
-    # 获取K线数据
-    kline = get_kline_data(code, config.lookback_days, is_etf=True)
+    # 获取K线数据（优先使用缓存）
+    if kline_cache is not None and code in kline_cache:
+        kline = get_kline_data_from_cache(kline_cache[code], code)
+    else:
+        kline = get_kline_data(code, config.lookback_days, is_etf=True)
 
     # 技术指标
     signals = calc_technical_signals(kline)
@@ -269,6 +281,7 @@ def main() -> None:
     # 5. 分析个股
     logger.info("开始分析个股...")
     stock_results: list[ScoreResult] = []
+    kline_cache: dict[str, pd.DataFrame] = {}
     if stock_pool is not None and not stock_pool.empty:
         # 预先批量获取所有股票的K线数据（共享BaoStock会话）
         stock_codes = [str(stock["code"]) for _, stock in stock_pool.iterrows()]
@@ -277,9 +290,14 @@ def main() -> None:
         kline_cache = get_stock_hist_batch_baostock(stock_codes, config.lookback_days)
         logger.info(f"K线数据预获取完成，成功 {sum(1 for v in kline_cache.values() if not v.empty)} 只")
 
+        # 预先批量获取所有股票的基本面数据（共享BaoStock会话）
+        logger.info(f"预先批量获取 {len(stock_codes)} 只股票的基本面数据...")
+        fund_cache = get_fundamental_data_batch(stock_codes)
+        logger.info(f"基本面数据预获取完成，成功 {len(fund_cache)} 只")
+
         for idx, (_, stock) in enumerate(stock_pool.iterrows()):
             try:
-                result = analyze_single_stock(stock, policy_impacts, config, kline_cache)
+                result = analyze_single_stock(stock, policy_impacts, config, kline_cache, fund_cache)
                 if (
                     result.total_score >= config.score_threshold_high
                     or result.total_score < config.score_threshold_low
@@ -299,9 +317,24 @@ def main() -> None:
     # 6. 分析ETF
     logger.info("开始分析ETF...")
     etf_results: list[ScoreResult] = []
+    etf_kline_cache: dict[str, pd.DataFrame] = {}
+    if etf_pool:
+        # 预先批量获取所有ETF的K线数据
+        etf_codes = [etf.code for etf in etf_pool]
+        logger.info(f"预先批量获取 {len(etf_codes)} 只ETF的K线数据...")
+        from baostock_data import get_etf_hist_baostock
+        for etf_code in etf_codes:
+            try:
+                df = get_etf_hist_baostock(etf_code, days=config.lookback_days)
+                if not df.empty:
+                    etf_kline_cache[etf_code] = df
+            except Exception as e:
+                logger.warning(f"获取ETF {etf_code} K线数据失败: {e}")
+        logger.info(f"ETF K线数据预获取完成，成功 {len(etf_kline_cache)} 只")
+
     for idx, etf in enumerate(etf_pool):
         try:
-            result = analyze_single_etf(etf, policy_impacts, config)
+            result = analyze_single_etf(etf, policy_impacts, config, etf_kline_cache)
             if (
                 result.total_score >= config.score_threshold_high
                 or result.total_score < config.score_threshold_low
@@ -316,16 +349,37 @@ def main() -> None:
 
     logger.info(f"ETF分析完成，共 {len(etf_results)} 只符合条件")
 
-    # 7. 生成图表
+    # 7. 生成图表（复用缓存 + 并行生成）
     logger.info("开始生成图表...")
     os.makedirs("charts", exist_ok=True)
-    for result in stock_results + etf_results:
+
+    def _generate_chart_for_result(result: ScoreResult) -> str:
+        """为单个评分结果生成图表。"""
         try:
-            kline = get_kline_data(result.code, config.lookback_days, result.is_etf)
+            if result.is_etf:
+                if result.code in etf_kline_cache:
+                    kline = get_kline_data_from_cache(etf_kline_cache[result.code], result.code)
+                else:
+                    kline = get_kline_data(result.code, config.lookback_days, is_etf=True)
+            else:
+                if result.code in kline_cache:
+                    kline = get_kline_data_from_cache(kline_cache[result.code], result.code)
+                else:
+                    kline = get_kline_data(result.code, config.lookback_days, is_etf=False)
             chart_path = f"charts/{result.code}.png"
             generate_chart(result.code, result.name, kline, chart_path)
+            return result.code
         except Exception as e:
             logger.warning(f"生成图表 {result.code} 失败: {e}")
+            return ""
+
+    all_results = stock_results + etf_results
+    if all_results:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(_generate_chart_for_result, r): r for r in all_results}
+            for future in as_completed(futures):
+                future.result()
+        logger.info(f"图表生成完成")
 
     # 8. 生成报告
     logger.info("开始生成报告...")
