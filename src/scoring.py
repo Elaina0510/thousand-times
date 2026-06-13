@@ -50,6 +50,105 @@ class ScoreResult:
     news_summary: str
 
 
+class ScoreCalculator:
+    """综合评分计算器 — 四维度加权模型。
+
+    个股：技术指标(35%) + 趋势判断(25%) + 量价配合(20%) + 基本面(20%)
+    ETF：  技术指标(55%) + 政策新闻(35%) + 资金流向(10%)
+    """
+
+    # 各维度满分常量（用于归一化）
+    TECHNICAL_MAX = 55.0      # 技术指标满分（ETF维度，个股也用此归一化）
+    TREND_MAX = 10.0           # 趋势判断满分（行业趋势 0~10）
+    VOLUME_PRICE_MAX = 20.0    # 量价配合满分（政策新闻 -20~+20 映射到 0~20）
+    FUNDAMENTAL_MAX = 30.0     # 基本面满分
+    ETF_NEWS_MAX = 35.0        # ETF政策新闻满分
+    ETF_FUND_FLOW_MAX = 10.0   # ETF资金流向满分
+
+    def __init__(self, config: ScoreWeightConfig) -> None:
+        self.config = config
+
+    def normalize_score(self, score: float, max_score: float) -> float:
+        """将各维度评分归一化到 0~100 范围。
+
+        Args:
+            score: 原始评分。
+            max_score: 该维度的满分。
+
+        Returns:
+            归一化后的评分（0~100）。
+        """
+        if max_score <= 0:
+            return 0.0
+        return max(0.0, min(100.0, (score / max_score) * 100))
+
+    def calc_total_score(
+        self,
+        technical: float,
+        fundamental: float | None,
+        news: float,
+        industry: float | None,
+        fund_flow: float | None,
+        is_etf: bool,
+    ) -> float:
+        """计算加权综合评分。
+
+        Args:
+            technical: 技术指标评分（个股0~55，ETF0~55）。
+            fundamental: 基本面评分（0~30，ETF为None）。
+            news: 政策新闻评分（-20~+20）。
+            industry: 行业趋势评分（0~10，ETF为None）。
+            fund_flow: 资金流向评分（0~10，个股为None）。
+            is_etf: 是否为ETF。
+
+        Returns:
+            综合评分（0~100）。
+        """
+        if is_etf:
+            tech_norm = self.normalize_score(technical, self.TECHNICAL_MAX)
+            news_norm = self.normalize_score(max(0, news), self.ETF_NEWS_MAX)
+            fund_norm = self.normalize_score(fund_flow or 0.0, self.ETF_FUND_FLOW_MAX)
+            total = (
+                tech_norm * self.config.etf_technical
+                + news_norm * self.config.etf_news
+                + fund_norm * self.config.etf_fund_flow
+            )
+        else:
+            tech_norm = self.normalize_score(technical, self.TECHNICAL_MAX)
+            fund_norm = self.normalize_score(fundamental or 0.0, self.FUNDAMENTAL_MAX)
+            # 趋势维度：使用行业趋势评分（0~10）
+            trend_norm = self.normalize_score(industry or 0.0, self.TREND_MAX)
+            # 量价维度：使用政策新闻评分（-20~+20 映射到 0~100）
+            vp_norm = self.normalize_score(max(0, news), self.VOLUME_PRICE_MAX)
+            total = (
+                tech_norm * self.config.stock_technical
+                + trend_norm * self.config.stock_trend
+                + vp_norm * self.config.stock_volume_price
+                + fund_norm * self.config.stock_fundamental
+            )
+
+        return max(0.0, min(100.0, round(total, 2)))
+
+    @staticmethod
+    def classify(score: float) -> str:
+        """根据综合评分分类投资建议。
+
+        Args:
+            score: 综合评分（0~100）。
+
+        Returns:
+            "strong_buy" (≥75), "buy" (60~74), "hold" (45~59), "avoid" (<45)
+        """
+        if score >= 75:
+            return "strong_buy"
+        elif score >= 60:
+            return "buy"
+        elif score >= 45:
+            return "hold"
+        else:
+            return "avoid"
+
+
 def calc_total_score(
     technical: float,
     fundamental: float | None,
@@ -59,34 +158,33 @@ def calc_total_score(
     is_etf: bool,
     config: ScoreWeightConfig,
 ) -> float:
-    """计算综合评分。
+    """计算综合评分（加权模型）。
 
-    各维度评分已在各自的满分范围内（技术0-40/55、基本面0-30、政策-20~+20、行业0-10、资金流向0-10），
-    直接求和得到总分。
+    使用四维度加权计算：
+    - 个股：技术指标(35%) + 趋势判断(25%) + 量价配合(20%) + 基本面(20%)
+    - ETF：  技术指标(55%) + 政策新闻(35%) + 资金流向(10%)
 
     Args:
-        technical: 技术指标评分（个股0~40，ETF0~55）。
-        fundamental: 基本面评分（0~30，ETF为None）。
-        news: 政策新闻评分（-20~+20）。
-        industry: 行业趋势评分（0~10，ETF为None）。
-        fund_flow: 资金流向评分（0~10，个股为None）。
+        technical: 技术指标评分。
+        fundamental: 基本面评分（ETF为None）。
+        news: 政策新闻评分。
+        industry: 行业趋势评分（ETF为None）。
+        fund_flow: 资金流向评分（个股为None）。
         is_etf: 是否为ETF。
         config: 评分权重配置。
 
     Returns:
         综合评分（0~100）。
     """
-    total = technical
-    if fundamental is not None:
-        total += fundamental
-    total += news
-    if industry is not None:
-        total += industry
-    if fund_flow is not None:
-        total += fund_flow
-
-    # 截断到 [0, 100] 范围
-    return max(0.0, min(100.0, total))
+    calculator = ScoreCalculator(config)
+    return calculator.calc_total_score(
+        technical=technical,
+        fundamental=fundamental,
+        news=news,
+        industry=industry,
+        fund_flow=fund_flow,
+        is_etf=is_etf,
+    )
 
 
 def score_to_probability(score: float) -> float:
@@ -111,25 +209,103 @@ def score_to_probability(score: float) -> float:
     return round(normalized * 100, 0)
 
 
-def judge_score(score: float, high_threshold: float, low_threshold: float) -> str:
-    """判定评分等级。
+def judge_score(score: float, high_threshold: float = 75.0, low_threshold: float = 45.0) -> str:
+    """判定评分等级（四档分类）。
 
     Args:
         score: 综合评分。
-        high_threshold: 高概率阈值（默认70）。
-        low_threshold: 风险警示阈值（默认30）。
+        high_threshold: 强烈买入阈值（默认75）。
+        low_threshold: 回避阈值（默认45）。
 
     Returns:
-        "recommend" (≥70), "watch" (50~69), "bearish" (30~49), "risk" (<30)
+        "strong_buy" (≥75), "buy" (60~74), "hold" (45~59), "avoid" (<45)
     """
     if score >= high_threshold:
-        return "recommend"
-    elif score >= 50:
-        return "watch"
+        return "strong_buy"
+    elif score >= 60:
+        return "buy"
     elif score >= low_threshold:
-        return "bearish"
+        return "hold"
     else:
-        return "risk"
+        return "avoid"
+
+
+# 行业→ETF映射表（支持多种格式）
+INDUSTRY_ETF_MAP: dict[str, str] = {
+    # 中文行业名称
+    "半导体": "512480",
+    "芯片": "512480",
+    "新能源": "516160",
+    "光伏": "516160",
+    "锂电": "516160",
+    "医药": "512010",
+    "医药生物": "512010",
+    "消费": "159928",
+    "食品饮料": "159928",
+    "白酒": "159928",
+    "军工": "512660",
+    "国防军工": "512660",
+    "金融": "510230",
+    "银行": "510230",
+    "证券": "510230",
+    "地产": "512200",
+    "房地产": "512200",
+    # BaoStock 证监会行业分类关键词
+    "计算机": "512480",
+    "通信": "512480",
+    "电子": "512480",
+    "软件": "512480",
+    "信息": "512480",
+    "医药制造": "512010",
+    "医疗": "512010",
+    "食品": "159928",
+    "饮料": "159928",
+    "酒": "159928",
+    "航空航天": "512660",
+    "保险": "510230",
+    "证券期货": "510230",
+    "建筑": "512200",
+}
+
+
+def clean_industry_name(industry: str) -> str:
+    """清理行业名称（去除 BaoStock 格式前缀）。
+
+    Args:
+        industry: 原始行业名称，如 "J66货币金融服务"。
+
+    Returns:
+        清理后的行业名称，如 "货币金融服务"。
+    """
+    if len(industry) > 3 and industry[0].isalpha() and industry[1:3].isdigit():
+        return industry[3:]
+    return industry
+
+
+def find_etf_for_industry(industry: str, etf_pool: list[str]) -> str | None:
+    """查找行业对应的ETF代码。
+
+    Args:
+        industry: 行业名称。
+        etf_pool: 可用的ETF代码列表。
+
+    Returns:
+        ETF代码，未找到返回 None。
+    """
+    clean_industry = clean_industry_name(industry)
+
+    # 精确匹配
+    etf_code = INDUSTRY_ETF_MAP.get(clean_industry)
+    if etf_code and etf_code in etf_pool:
+        return etf_code
+
+    # 模糊匹配
+    for key, value in INDUSTRY_ETF_MAP.items():
+        if key in clean_industry or clean_industry in key:
+            if value in etf_pool:
+                return value
+
+    return None
 
 
 def get_industry_trend_score(
@@ -152,59 +328,9 @@ def get_industry_trend_score(
     if not industry:
         return config.industry_trend_weight.sideways
 
-    # 行业→ETF映射表（支持多种格式）
-    industry_etf_map: dict[str, str] = {
-        # 中文行业名称
-        "半导体": "512480",
-        "芯片": "512480",
-        "新能源": "516160",
-        "光伏": "516160",
-        "锂电": "516160",
-        "医药": "512010",
-        "医药生物": "512010",
-        "消费": "159928",
-        "食品饮料": "159928",
-        "白酒": "159928",
-        "军工": "512660",
-        "国防军工": "512660",
-        "金融": "510230",
-        "银行": "510230",
-        "证券": "510230",
-        "地产": "512200",
-        "房地产": "512200",
-        # BaoStock 证监会行业分类关键词
-        "计算机": "512480",
-        "通信": "512480",
-        "电子": "512480",
-        "软件": "512480",
-        "信息": "512480",
-        "医药制造": "512010",
-        "医疗": "512010",
-        "食品": "159928",
-        "饮料": "159928",
-        "酒": "159928",
-        "航空航天": "512660",
-        "保险": "510230",
-        "证券期货": "510230",
-        "建筑": "512200",
-    }
+    etf_code = find_etf_for_industry(industry, etf_pool)
 
-    # 清理行业名称（去除 BaoStock 格式前缀，如 "J66货币金融服务" → "货币金融服务"）
-    clean_industry = industry
-    if len(industry) > 3 and industry[0].isalpha() and industry[1:3].isdigit():
-        clean_industry = industry[3:]
-
-    # 查找对应的ETF（精确匹配）
-    etf_code = industry_etf_map.get(clean_industry)
-
-    # 模糊匹配
     if etf_code is None:
-        for key, value in industry_etf_map.items():
-            if key in clean_industry or clean_industry in key:
-                etf_code = value
-                break
-
-    if etf_code is None or etf_code not in etf_pool:
         # 无法匹配行业，默认横盘评分
         return config.industry_trend_weight.sideways
 

@@ -9,6 +9,7 @@ import pytest
 
 from config import (
     AppConfig,
+    BuySellSignalConfig,
     DEFAULT_ETF_POOL,
     EtfFundFlowWeightConfig,
     FilterConfig,
@@ -72,7 +73,7 @@ class TestFilterConfig:
         config = FilterConfig()
         assert config.min_market_cap == 20e8
         assert config.min_listing_months == 3
-        assert config.pool_size == 1000
+        assert config.pool_size == 200
 
 
 class TestDefaultEtfPool:
@@ -106,8 +107,9 @@ class TestAppConfig:
 
     def test_default_thresholds(self) -> None:
         config = AppConfig()
-        assert config.score_threshold_high == 70.0
-        assert config.score_threshold_low == 30.0
+        assert config.buy_sell_signal is not None
+        assert config.buy_sell_signal.buy_threshold == 70.0
+        assert config.buy_sell_signal.sell_threshold == 30.0
 
 
 class TestLoadConfig:

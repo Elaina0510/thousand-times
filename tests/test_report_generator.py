@@ -88,10 +88,8 @@ class TestGenerateReport:
 
         report = generate_report(stock_results, etf_results, policy_impacts, "2026-06-06")
 
-        assert "📈 今日个股推荐关注" in report
-        assert "📈 今日ETF推荐关注" in report
-        assert "⚠️ 个股风险警示" in report
-        assert "⚠️ ETF风险警示" in report
+        assert "🟢 买入区" in report
+        assert "🔴 卖出区" in report
         assert "📰 今日政策要闻" in report
         assert "以上分析仅供参考" in report
 
@@ -102,10 +100,8 @@ class TestGenerateReport:
 
         report = generate_report(stock_results, etf_results, [], "2026-06-06")
 
-        assert "📈 今日个股推荐关注" in report
-        assert "📈 今日ETF推荐关注" in report
-        assert "⚠️ 个股风险警示" not in report
-        assert "⚠️ ETF风险警示" not in report
+        assert "🟢 买入区" in report
+        assert "🔴 卖出区" not in report
 
     def test_only_risk(self) -> None:
         """仅有风险的报告。"""
@@ -114,10 +110,8 @@ class TestGenerateReport:
 
         report = generate_report(stock_results, etf_results, [], "2026-06-06")
 
-        assert "⚠️ 个股风险警示" in report
-        assert "⚠️ ETF风险警示" in report
-        assert "📈 今日个股推荐关注" not in report
-        assert "📈 今日ETF推荐关注" not in report
+        assert "🔴 卖出区" in report
+        assert "🟢 买入区" not in report
 
     def test_no_recommend_no_risk(self) -> None:
         """无推荐无风险的报告。"""

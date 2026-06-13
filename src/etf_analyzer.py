@@ -32,7 +32,6 @@ def _fetch_etf_hist(code: str) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
-    # 优先使用 BaoStock（更稳定）
     try:
         from baostock_data import get_etf_hist_baostock
         logger.info(f"使用 BaoStock 获取 ETF {code} 历史数据")
@@ -42,19 +41,7 @@ def _fetch_etf_hist(code: str) -> pd.DataFrame:
     except Exception as e:
         logger.warning(f"BaoStock 获取 ETF {code} 失败: {e}")
 
-    # 回退到 AKShare
-    try:
-        import akshare as ak  # type: ignore[import-untyped]
-        logger.info(f"使用 AKShare 获取 ETF {code} 历史数据")
-        result: pd.DataFrame = ak.fund_etf_hist_em(
-            symbol=code,
-            period="daily",
-            adjust="qfq",
-        )
-        return result
-    except Exception as e:
-        logger.warning(f"AKShare 获取 ETF {code} 失败: {e}")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 
 def _fetch_etf_fund_daily(code: str) -> pd.DataFrame:
@@ -109,16 +96,17 @@ ETF_NAME_MAP: dict[str, str] = {
 }
 
 
-def get_etf_pool(config: AppConfig) -> list[EtfInfo]:
-    """获取ETF池中各ETF的当前行情。
+def get_etf_pool(config: AppConfig) -> tuple[list[EtfInfo], dict[str, pd.DataFrame]]:
+    """获取ETF池中各ETF的当前行情，同时返回K线数据缓存。
 
     Args:
         config: 应用配置。
 
     Returns:
-        ETF信息列表。
+        (ETF信息列表, ETF K线数据缓存 {code: DataFrame})
     """
     etf_list: list[EtfInfo] = []
+    kline_cache: dict[str, pd.DataFrame] = {}
 
     for code in config.etf_pool:
         try:
@@ -127,6 +115,9 @@ def get_etf_pool(config: AppConfig) -> list[EtfInfo]:
             if df.empty:
                 logger.warning(f"ETF {code} 数据为空")
                 continue
+
+            # 缓存原始 K-line 数据（供后续技术分析使用）
+            kline_cache[code] = df
 
             # 重命名列（支持 AKShare 和 BaoStock 两种格式）
             column_mapping = {
@@ -162,7 +153,7 @@ def get_etf_pool(config: AppConfig) -> list[EtfInfo]:
             continue
 
     logger.info(f"ETF池获取完成，共 {len(etf_list)} 只ETF")
-    return etf_list
+    return etf_list, kline_cache
 
 
 def calc_fund_flow_score(share_changes: list[float]) -> float:

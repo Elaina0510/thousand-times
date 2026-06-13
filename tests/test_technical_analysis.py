@@ -150,7 +150,7 @@ class TestCalcTechnicalSignals:
 class TestGetKlineData:
     """K线数据获取测试。"""
 
-    @patch("technical_analysis._fetch_stock_hist")
+    @patch("technical_analysis._fetch_stock_hist_ashare")
     def test_normal_stock(self, mock_hist: MagicMock) -> None:
         """正常获取个股K线数据。"""
         mock_hist.return_value = _make_stock_hist()
@@ -162,7 +162,7 @@ class TestGetKlineData:
         assert len(result.ma5) > 0
         assert len(result.dif) > 0
 
-    @patch("technical_analysis._fetch_etf_hist")
+    @patch("technical_analysis._fetch_etf_hist_ashare")
     def test_normal_etf(self, mock_hist: MagicMock) -> None:
         """正常获取ETF K线数据。"""
         mock_hist.return_value = _make_stock_hist()
@@ -172,9 +172,9 @@ class TestGetKlineData:
         assert isinstance(result, KlineData)
         assert len(result.closes) > 0
 
-    @patch("technical_analysis._fetch_stock_hist")
+    @patch("technical_analysis._fetch_stock_hist_ashare")
     def test_api_failure(self, mock_hist: MagicMock) -> None:
-        """AKShare失败时抛出异常。"""
+        """BaoStock失败时抛出异常。"""
         mock_hist.side_effect = Exception("API 超时")
 
         with pytest.raises(Exception, match="API 超时"):

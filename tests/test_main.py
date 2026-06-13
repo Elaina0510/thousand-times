@@ -135,12 +135,13 @@ class TestMain:
         """完整流程测试。"""
         mock_config.return_value = AppConfig()
         mock_stock_pool.return_value = pd.DataFrame({"code": ["600519"], "name": ["贵州茅台"]})
-        mock_etf_pool.return_value = [_make_etf_info()]
+        mock_etf_pool.return_value = ([_make_etf_info()], {})
         mock_news.return_value = []
         mock_filter.return_value = []
         mock_impacts.return_value = []
 
-        # 模拟分析结果（推荐）
+        # 模拟分析结果（加权评分模型）
+        # 个股：技术(30/55*100*0.35) + 趋势(10/10*100*0.25) + 量价(15/20*100*0.20) + 基本面(20/30*100*0.20) = 72.42
         mock_analyze_stock.return_value = ScoreResult(
             code="600519",
             name="贵州茅台",
@@ -150,12 +151,13 @@ class TestMain:
             news_score=15.0,
             industry_score=10.0,
             fund_flow_score=None,
-            total_score=75.0,
-            profit_probability=70.0,
-            judgment="recommend",
+            total_score=72.42,
+            profit_probability=68.0,
+            judgment="buy",
             technical_signals=TechnicalSignals(),
             news_summary="",
         )
+        # ETF：技术(40/55*100*0.55) + 新闻(25/35*100*0.35) + 资金流向(8/10*100*0.10) = 73.0
         mock_analyze_etf.return_value = ScoreResult(
             code="512480",
             name="半导体ETF",
@@ -167,7 +169,7 @@ class TestMain:
             fund_flow_score=8.0,
             total_score=73.0,
             profit_probability=68.0,
-            judgment="recommend",
+            judgment="strong_buy",
             technical_signals=TechnicalSignals(),
             news_summary="",
         )

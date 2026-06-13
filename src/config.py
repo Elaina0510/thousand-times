@@ -79,17 +79,36 @@ class EtfFundFlowWeightConfig:
 
 @dataclass
 class ScoreWeightConfig:
-    """综合评分维度权重配置。"""
+    """综合评分维度权重配置（四维度加权模型）。
 
-    # 个股
-    stock_technical: float = 0.40
-    stock_fundamental: float = 0.30
-    stock_news: float = 0.20
-    stock_industry: float = 0.10
-    # ETF
+    个股四维度：技术指标 35% + 趋势判断 25% + 量价配合 20% + 基本面 20% = 100%
+    ETF 三维度：技术指标 55% + 政策新闻 35% + 资金流向 10% = 100%
+    """
+
+    # 个股四维度权重
+    stock_technical: float = 0.35
+    stock_trend: float = 0.25
+    stock_volume_price: float = 0.20
+    stock_fundamental: float = 0.20
+    # 兼容旧字段（个股政策新闻、行业，映射到趋势维度）
+    stock_news: float = 0.25  # 等同于 stock_trend
+    stock_industry: float = 0.20  # 等同于 stock_volume_price
+    # ETF 三维度权重
     etf_technical: float = 0.55
     etf_news: float = 0.35
     etf_fund_flow: float = 0.10
+
+
+@dataclass
+class BuySellSignalConfig:
+    """买卖信号配置。"""
+    # 三档阈值
+    buy_threshold: float = 70.0      # 买入区阈值
+    sell_threshold: float = 30.0     # 卖出区阈值
+    # 关键价位计算权重
+    ma_weight: float = 0.4           # 均线权重（支撑位/压力位中均线的占比，剩余为近期高低点）
+    # 历史准确率周期
+    history_days: list[int] = field(default_factory=lambda: [30, 90, 180])
 
 
 @dataclass
@@ -131,8 +150,7 @@ class AppConfig:
     industry_trend_weight: IndustryTrendWeightConfig = field(default_factory=IndustryTrendWeightConfig)
     etf_fund_flow_weight: EtfFundFlowWeightConfig = field(default_factory=EtfFundFlowWeightConfig)
     etf_pool: list[str] = field(default_factory=lambda: list(DEFAULT_ETF_POOL))
-    score_threshold_high: float = 50.0  # 推荐阈值（原70太高，导致无推荐）
-    score_threshold_low: float = 20.0   # 风险阈值（原30太高，导致太多风险警示）
+    buy_sell_signal: BuySellSignalConfig = field(default_factory=BuySellSignalConfig)
     request_delay_range: tuple[float, float] = (1.0, 5.0)
     max_retries: int = 3
     lookback_days: int = 60

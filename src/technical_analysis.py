@@ -35,7 +35,7 @@ class KlineData:
 
 
 def _fetch_stock_hist_ashare(code: str, days: int) -> pd.DataFrame:
-    """使用 Ashare 获取个股历史行情。
+    """使用 BaoStock 获取个股历史行情。
 
     Args:
         code: 股票代码。
@@ -44,7 +44,6 @@ def _fetch_stock_hist_ashare(code: str, days: int) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
-    # 优先使用 BaoStock（更稳定）
     try:
         from baostock_data import get_stock_hist_baostock
         logger.info(f"使用 BaoStock 获取 {code} 历史数据")
@@ -54,33 +53,11 @@ def _fetch_stock_hist_ashare(code: str, days: int) -> pd.DataFrame:
     except Exception as e:
         logger.warning(f"BaoStock 获取 {code} 失败: {e}")
 
-    # 回退到 Ashare
-    try:
-        from ashare_data import get_stock_hist_ashare
-        logger.info(f"使用 Ashare 获取 {code} 历史数据")
-        df = get_stock_hist_ashare(code, days)
-        if not df.empty:
-            return df
-    except Exception as e:
-        logger.warning(f"Ashare 获取 {code} 失败: {e}")
-
-    # 最后回退到 AKShare
-    try:
-        logger.info(f"使用 AKShare 获取 {code} 历史数据")
-        import akshare as ak  # type: ignore[import-untyped]
-        result: pd.DataFrame = ak.stock_zh_a_hist(
-            symbol=code,
-            period="daily",
-            adjust="qfq",
-        )
-        return result
-    except Exception as e:
-        logger.warning(f"AKShare 获取 {code} 失败: {e}")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 
 def _fetch_etf_hist_ashare(code: str, days: int) -> pd.DataFrame:
-    """使用 Ashare 获取 ETF 历史行情。
+    """使用 BaoStock 获取 ETF 历史行情。
 
     Args:
         code: ETF 代码。
@@ -89,7 +66,6 @@ def _fetch_etf_hist_ashare(code: str, days: int) -> pd.DataFrame:
     Returns:
         包含历史行情的 DataFrame。
     """
-    # 优先使用 BaoStock（更稳定）
     try:
         from baostock_data import get_etf_hist_baostock
         logger.info(f"使用 BaoStock 获取 ETF {code} 历史数据")
@@ -99,29 +75,7 @@ def _fetch_etf_hist_ashare(code: str, days: int) -> pd.DataFrame:
     except Exception as e:
         logger.warning(f"BaoStock 获取 ETF {code} 失败: {e}")
 
-    # 回退到 Ashare
-    try:
-        from ashare_data import get_etf_hist_ashare
-        logger.info(f"使用 Ashare 获取 ETF {code} 历史数据")
-        df = get_etf_hist_ashare(code, days)
-        if not df.empty:
-            return df
-    except Exception as e:
-        logger.warning(f"Ashare 获取 ETF {code} 失败: {e}")
-
-    # 最后回退到 AKShare
-    try:
-        logger.info(f"使用 AKShare 获取 ETF {code} 历史数据")
-        import akshare as ak  # type: ignore[import-untyped]
-        result: pd.DataFrame = ak.fund_etf_hist_em(
-            symbol=code,
-            period="daily",
-            adjust="qfq",
-        )
-        return result
-    except Exception as e:
-        logger.warning(f"AKShare 获取 ETF {code} 失败: {e}")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 
 def _calc_ema(series: pd.Series, n: int) -> pd.Series:

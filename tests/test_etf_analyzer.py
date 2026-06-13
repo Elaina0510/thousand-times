@@ -42,12 +42,16 @@ class TestGetEtfPool:
         mock_hist.return_value = _make_etf_hist()
 
         config = AppConfig(etf_pool=["512480", "516160"])
-        result = get_etf_pool(config)
+        etf_list, kline_cache = get_etf_pool(config)
 
-        assert len(result) == 2
-        assert all(isinstance(etf, EtfInfo) for etf in result)
-        assert result[0].code == "512480"
-        assert result[1].code == "516160"
+        assert len(etf_list) == 2
+        assert all(isinstance(etf, EtfInfo) for etf in etf_list)
+        assert etf_list[0].code == "512480"
+        assert etf_list[1].code == "516160"
+        # K线缓存也应包含数据
+        assert len(kline_cache) == 2
+        assert "512480" in kline_cache
+        assert "516160" in kline_cache
 
     @patch("etf_analyzer._fetch_etf_hist")
     def test_empty_data(self, mock_hist: MagicMock) -> None:
@@ -55,9 +59,10 @@ class TestGetEtfPool:
         mock_hist.return_value = pd.DataFrame()
 
         config = AppConfig(etf_pool=["512480"])
-        result = get_etf_pool(config)
+        etf_list, kline_cache = get_etf_pool(config)
 
-        assert len(result) == 0
+        assert len(etf_list) == 0
+        assert len(kline_cache) == 0
 
     @patch("etf_analyzer._fetch_etf_hist")
     def test_api_failure(self, mock_hist: MagicMock) -> None:
@@ -65,9 +70,10 @@ class TestGetEtfPool:
         mock_hist.side_effect = Exception("API 超时")
 
         config = AppConfig(etf_pool=["512480"])
-        result = get_etf_pool(config)
+        etf_list, kline_cache = get_etf_pool(config)
 
-        assert len(result) == 0
+        assert len(etf_list) == 0
+        assert len(kline_cache) == 0
 
 
 class TestCalcFundFlowScore:

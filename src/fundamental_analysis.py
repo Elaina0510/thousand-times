@@ -49,63 +49,65 @@ def _fetch_single_with_session(bs, code: str, current_year: int, current_quarter
 
         result = {}
 
-        # 尝试最近几个季度
-        for year in [current_year, current_year - 1]:
-            for quarter in [current_quarter, 4, 3, 2, 1]:
-                if year == current_year and quarter > current_quarter:
-                    continue
+        # 尝试最近 2 个季度（减少 API 调用次数，从 10 次降至最多 4 次）
+        quarters_to_try = [(current_year, current_quarter)]
+        if current_quarter == 1:
+            quarters_to_try.append((current_year - 1, 4))
+        else:
+            quarters_to_try.append((current_year, current_quarter - 1))
 
-                # 获取盈利能力数据
-                rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
-                if rs_profit.error_code == '0':
-                    profit_list = []
-                    while (rs_profit.error_code == '0') & rs_profit.next():
-                        profit_list.append(rs_profit.get_row_data())
+        for year, quarter in quarters_to_try:
+            # 获取盈利能力数据
+            rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
+            if rs_profit.error_code == '0':
+                profit_list = []
+                while (rs_profit.error_code == '0') & rs_profit.next():
+                    profit_list.append(rs_profit.get_row_data())
 
-                    if profit_list:
-                        latest = profit_list[-1]
-                        fields = rs_profit.fields
+                if profit_list:
+                    latest = profit_list[-1]
+                    fields = rs_profit.fields
 
-                        # 提取 EPS 和 ROE
-                        if 'epsTTM' in fields:
-                            eps_idx = fields.index('epsTTM')
-                            result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
+                    # 提取 EPS 和 ROE
+                    if 'epsTTM' in fields:
+                        eps_idx = fields.index('epsTTM')
+                        result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
 
-                        if 'roeAvg' in fields:
-                            roe_idx = fields.index('roeAvg')
-                            result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
+                    if 'roeAvg' in fields:
+                        roe_idx = fields.index('roeAvg')
+                        result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
 
-                        logger.debug(f"BaoStock 获取 {code} 盈利数据成功（{year}Q{quarter}）")
+                    logger.debug(f"BaoStock 获取 {code} 盈利数据成功（{year}Q{quarter}）")
 
-                # 获取成长能力数据
-                rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
-                if rs_growth.error_code == '0':
-                    growth_list = []
-                    while (rs_growth.error_code == '0') & rs_growth.next():
-                        growth_list.append(rs_growth.get_row_data())
+            # 获取成长能力数据
+            rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
+            if rs_growth.error_code == '0':
+                growth_list = []
+                while (rs_growth.error_code == '0') & rs_growth.next():
+                    growth_list.append(rs_growth.get_row_data())
 
-                    if growth_list:
-                        latest = growth_list[-1]
-                        fields = rs_growth.fields
+                if growth_list:
+                    latest = growth_list[-1]
+                    fields = rs_growth.fields
 
-                        # 提取净利润同比增长率
-                        if 'YOYNI' in fields:
-                            yoy_ni_idx = fields.index('YOYNI')
-                            val = latest[yoy_ni_idx]
-                            if val:
-                                result['profit_growth'] = float(val) * 100  # 转换为百分比
+                    # 提取净利润同比增长率
+                    if 'YOYNI' in fields:
+                        yoy_ni_idx = fields.index('YOYNI')
+                        val = latest[yoy_ni_idx]
+                        if val:
+                            result['profit_growth'] = float(val) * 100  # 转换为百分比
 
-                        # 提取营收同比增长率
-                        if 'YOYPNI' in fields:
-                            yoy_pni_idx = fields.index('YOYPNI')
-                            val = latest[yoy_pni_idx]
-                            if val:
-                                result['revenue_growth'] = float(val) * 100  # 转换为百分比
+                    # 提取营收同比增长率
+                    if 'YOYPNI' in fields:
+                        yoy_pni_idx = fields.index('YOYPNI')
+                        val = latest[yoy_pni_idx]
+                        if val:
+                            result['revenue_growth'] = float(val) * 100  # 转换为百分比
 
-                        logger.debug(f"BaoStock 获取 {code} 成长数据成功（{year}Q{quarter}）")
+                    logger.debug(f"BaoStock 获取 {code} 成长数据成功（{year}Q{quarter}）")
 
-                if result:
-                    return result
+            if result:
+                return result
 
         return result
 
