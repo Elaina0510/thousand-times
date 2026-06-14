@@ -30,11 +30,16 @@ class PolicyImpact:
     """政策影响分析结果。"""
 
     news_title: str
-    affected_industries: list[str]
-    impact_direction: str  # "positive" / "negative" / "neutral"
-    impact_degree: str  # "direct" / "indirect"
-    impact_score: float  # -20 ~ +20
-    summary: str
+    news_url: str = ""  # 新闻链接
+    affected_industries: list[str] = None  # type: ignore[assignment]
+    impact_direction: str = "neutral"  # "positive" / "negative" / "neutral"
+    impact_degree: str = "indirect"  # "direct" / "indirect"
+    impact_score: float = 5.0  # -20 ~ +20
+    summary: str = ""
+
+    def __post_init__(self) -> None:
+        if self.affected_industries is None:
+            self.affected_industries = []
 
 
 # 可信来源白名单
@@ -169,6 +174,7 @@ def analyze_policy_impact(
         return [
             PolicyImpact(
                 news_title=item.title,
+                news_url=item.url,
                 affected_industries=["整体市场"],
                 impact_direction="neutral",
                 impact_degree="indirect",
@@ -229,8 +235,8 @@ def analyze_policy_impact(
         result = response.json()
         content = result["choices"][0]["message"]["content"]
 
-        # 解析JSON
-        impacts = _parse_llm_response(content)
+        # 解析JSON，并关联URL
+        impacts = _parse_llm_response(content, news[:10])
         if impacts:
             return impacts
 
@@ -242,11 +248,12 @@ def analyze_policy_impact(
         return _default_impacts(news)
 
 
-def _parse_llm_response(content: str) -> list[PolicyImpact]:
+def _parse_llm_response(content: str, news: list[NewsItem] | None = None) -> list[PolicyImpact]:
     """解析LLM返回的JSON响应。
 
     Args:
         content: LLM返回的内容。
+        news: 原始新闻列表（用于关联URL）。
 
     Returns:
         政策影响列表，解析失败返回空列表。
@@ -260,10 +267,16 @@ def _parse_llm_response(content: str) -> list[PolicyImpact]:
             data = json.loads(json_str)
 
             impacts: list[PolicyImpact] = []
-            for item in data:
+            for i, item in enumerate(data):
+                # 从原始新闻列表中获取URL
+                news_url = ""
+                if news and i < len(news):
+                    news_url = news[i].url
+
                 impacts.append(
                     PolicyImpact(
                         news_title=item.get("news_title", ""),
+                        news_url=news_url,
                         affected_industries=item.get("affected_industries", []),
                         impact_direction=item.get("impact_direction", "neutral"),
                         impact_degree=item.get("impact_degree", "indirect"),
@@ -291,6 +304,7 @@ def _default_impacts(news: list[NewsItem]) -> list[PolicyImpact]:
     return [
         PolicyImpact(
             news_title=item.title,
+            news_url=item.url,
             affected_industries=["整体市场"],
             impact_direction="neutral",
             impact_degree="indirect",

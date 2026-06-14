@@ -628,7 +628,20 @@ def main() -> None:
         score_threshold_low=config.buy_sell_signal.sell_threshold,
     )
 
-    # 9. 推送
+    # 9.1 生成HTML报告（包含图表）
+    try:
+        from html_report import generate_html_report
+        html_path = generate_html_report(
+            report_text=report,
+            chart_dir="charts",
+            output_dir="public",
+            report_date=report_date,
+        )
+        logger.info(f"HTML报告已生成: {html_path}")
+    except Exception as e:
+        logger.warning(f"HTML报告生成失败: {e}")
+
+    # 10. 推送
     pushplus_token = os.environ.get("PUSHPLUS_TOKEN", "")
     if pushplus_token:
         logger.info("开始推送...")

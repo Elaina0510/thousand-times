@@ -8,6 +8,17 @@ on:
   # 支持手动触发
   workflow_dispatch:
 
+# 添加 permissions 以支持 GitHub Pages 部署
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 确保同时只有一个部署任务
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -31,7 +42,7 @@ jobs:
           fc-cache -fv
 
       - name: Create output directories
-        run: mkdir -p logs charts
+        run: mkdir -p logs charts public
 
       - name: Install dependencies
         run: |
@@ -85,3 +96,19 @@ jobs:
           path: charts/
           retention-days: 7
           if-no-files-found: ignore
+
+      # GitHub Pages 部署
+      - name: Setup Pages
+        if: success()
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact for GitHub Pages
+        if: success()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'public'
+
+      - name: Deploy to GitHub Pages
+        if: success()
+        id: deployment
+        uses: actions/deploy-pages@v4

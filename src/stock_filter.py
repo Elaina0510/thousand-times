@@ -59,101 +59,116 @@ def _fetch_stock_spot() -> pd.DataFrame:
         raise
 
 
-def _fetch_stock_data_baostock() -> tuple[pd.DataFrame, pd.DataFrame]:
+def _fetch_stock_data_baostock(max_retries: int = 3) -> tuple[pd.DataFrame, pd.DataFrame]:
     """使用 BaoStock 获取全市场股票数据（代码+上市日期+行业）。
 
-    一次登录获取所有数据，避免多次登录/登出导致的连接问题。
+    带重试机制，一次登录获取所有数据，避免多次登录/登出导致的连接问题。
+
+    Args:
+        max_retries: 最大重试次数，默认3次。
 
     Returns:
         (spot_df, info_df) 元组：
         - spot_df: 包含 code, name, industry 列的股票代码 DataFrame
         - info_df: 包含 代码, 名称, 上市日期 列的股票信息 DataFrame
     """
+    import time
     import baostock as bs
 
-    # 登录
-    lg = bs.login()
-    if lg.error_code != '0':
-        logger.error(f"BaoStock 登录失败: {lg.error_msg}")
-        raise RuntimeError(f"BaoStock 登录失败: {lg.error_msg}")
-
-    try:
-        # 获取所有股票代码
-        rs = bs.query_stock_basic()
-        if rs.error_code != '0':
-            logger.error(f"BaoStock 获取股票列表失败: {rs.error_msg}")
-            raise RuntimeError(f"BaoStock 获取股票列表失败: {rs.error_msg}")
-
-        stock_list = []
-        while (rs.error_code == '0') & rs.next():
-            row = rs.get_row_data()
-            stock_list.append(row)
-
-        if not stock_list:
-            logger.warning("BaoStock 返回空股票列表")
-            return pd.DataFrame(), pd.DataFrame()
-
-        # 转换为 DataFrame
-        stock_df = pd.DataFrame(stock_list, columns=rs.fields)
-
-        # 只保留 A 股（sh.6, sz.0, sz.3 开头）
-        a_stock_mask = (
-            stock_df['code'].str.startswith('sh.6') |
-            stock_df['code'].str.startswith('sz.0') |
-            stock_df['code'].str.startswith('sz.3')
-        )
-        stock_df = stock_df[a_stock_mask]
-
-        # 获取行业信息
-        industry_dict = {}
+    last_error = None
+    for attempt in range(max_retries):
         try:
-            rs_industry = bs.query_stock_industry()
-            if rs_industry.error_code == '0':
-                while (rs_industry.error_code == '0') & rs_industry.next():
-                    row = rs_industry.get_row_data()
-                    if len(row) >= 4:
-                        code = row[1].replace('sh.', '').replace('sz.', '')
-                        industry = row[3] if row[3] else ''
-                        industry_dict[code] = industry
-                logger.info(f"获取到 {len(industry_dict)} 只股票的行业信息")
+            # 登录
+            lg = bs.login()
+            if lg.error_code != '0':
+                logger.error(f"BaoStock 登录失败: {lg.error_msg}")
+                raise RuntimeError(f"BaoStock 登录失败: {lg.error_msg}")
+
+            try:
+                # 获取所有股票代码
+                rs = bs.query_stock_basic()
+                if rs.error_code != '0':
+                    logger.error(f"BaoStock 获取股票列表失败: {rs.error_msg}")
+                    raise RuntimeError(f"BaoStock 获取股票列表失败: {rs.error_msg}")
+
+                stock_list = []
+                while (rs.error_code == '0') & rs.next():
+                    row = rs.get_row_data()
+                    stock_list.append(row)
+
+                if not stock_list:
+                    logger.warning("BaoStock 返回空股票列表")
+                    return pd.DataFrame(), pd.DataFrame()
+
+                # 转换为 DataFrame
+                stock_df = pd.DataFrame(stock_list, columns=rs.fields)
+
+                # 只保留 A 股（sh.6, sz.0, sz.3 开头）
+                a_stock_mask = (
+                    stock_df['code'].str.startswith('sh.6') |
+                    stock_df['code'].str.startswith('sz.0') |
+                    stock_df['code'].str.startswith('sz.3')
+                )
+                stock_df = stock_df[a_stock_mask]
+
+                # 获取行业信息
+                industry_dict = {}
+                try:
+                    rs_industry = bs.query_stock_industry()
+                    if rs_industry.error_code == '0':
+                        while (rs_industry.error_code == '0') & rs_industry.next():
+                            row = rs_industry.get_row_data()
+                            if len(row) >= 4:
+                                code = row[1].replace('sh.', '').replace('sz.', '')
+                                industry = row[3] if row[3] else ''
+                                industry_dict[code] = industry
+                        logger.info(f"获取到 {len(industry_dict)} 只股票的行业信息")
+                except Exception as e:
+                    logger.warning(f"获取行业信息失败: {e}")
+
+                # 构建 spot DataFrame（包含 code, name, industry）
+                spot_list = []
+                for _, row in stock_df.iterrows():
+                    code = row['code'].replace('sh.', '').replace('sz.', '')
+                    name = row.get('code_name', '')
+                    industry = industry_dict.get(code, '')
+                    spot_list.append({
+                        'code': code,
+                        'name': name,
+                        'industry': industry,
+                    })
+
+                # 构建 info DataFrame（包含代码、名称、上市日期）
+                info_list = []
+                for _, row in stock_df.iterrows():
+                    code = row['code'].replace('sh.', '').replace('sz.', '')
+                    name = row.get('code_name', '')
+                    ipo_date = row.get('ipoDate', '')
+                    info_list.append({
+                        '代码': code,
+                        '名称': name,
+                        '上市日期': ipo_date,
+                    })
+
+                spot_df = pd.DataFrame(spot_list) if spot_list else pd.DataFrame()
+                info_df = pd.DataFrame(info_list) if info_list else pd.DataFrame()
+
+                logger.info(f"BaoStock 获取 {len(spot_df)} 只股票代码")
+                return spot_df, info_df
+
+            finally:
+                bs.logout()
+
         except Exception as e:
-            logger.warning(f"获取行业信息失败: {e}")
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                logger.warning(f"BaoStock 获取失败，{wait_time}秒后重试 ({attempt + 1}/{max_retries}): {e}")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"BaoStock 获取全市场数据失败，已重试 {max_retries} 次: {e}")
 
-        # 构建 spot DataFrame（包含 code, name, industry）
-        spot_list = []
-        for _, row in stock_df.iterrows():
-            code = row['code'].replace('sh.', '').replace('sz.', '')
-            name = row.get('code_name', '')
-            industry = industry_dict.get(code, '')
-            spot_list.append({
-                'code': code,
-                'name': name,
-                'industry': industry,
-            })
-
-        # 构建 info DataFrame（包含代码、名称、上市日期）
-        info_list = []
-        for _, row in stock_df.iterrows():
-            code = row['code'].replace('sh.', '').replace('sz.', '')
-            name = row.get('code_name', '')
-            ipo_date = row.get('ipoDate', '')
-            info_list.append({
-                '代码': code,
-                '名称': name,
-                '上市日期': ipo_date,
-            })
-
-        spot_df = pd.DataFrame(spot_list) if spot_list else pd.DataFrame()
-        info_df = pd.DataFrame(info_list) if info_list else pd.DataFrame()
-
-        logger.info(f"BaoStock 获取 {len(spot_df)} 只股票代码")
-        return spot_df, info_df
-
-    except Exception as e:
-        logger.error(f"BaoStock 获取全市场数据失败: {e}")
-        raise
-    finally:
-        bs.logout()
+    raise last_error  # type: ignore[misc]
 
 
 def get_stock_pool(config: FilterConfig) -> pd.DataFrame:

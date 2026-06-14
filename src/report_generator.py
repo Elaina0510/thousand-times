@@ -36,9 +36,10 @@ def _append_impact_line(
         if impact.affected_industries
         else "整体市场"
     )
-    sections.append(
-        f"{index}. {impact.news_title} → {direction}{industries}"
-    )
+    line = f"{index}. {impact.news_title} → {direction}{industries}"
+    if impact.news_url:
+        line += f" [详情]({impact.news_url})"
+    sections.append(line)
 
 
 def _format_stock_item(

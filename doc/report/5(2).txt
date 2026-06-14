@@ -1,0 +1,309 @@
+Run echo "Starting analysis..."
+Starting analysis...
+2026-06-13 14:58:18,022 - thousand-times - INFO - ==================================================
+2026-06-13 14:58:18,022 - thousand-times - INFO - 开始A股每日分析
+2026-06-13 14:58:18,022 - thousand-times - INFO - ==================================================
+2026-06-13 14:58:18,023 - thousand-times - INFO - 检测到 CI 环境，将使用容错模式
+2026-06-13 14:58:18,023 - thousand-times - INFO - 配置加载完成
+2026-06-13 14:58:18,023 - thousand-times - INFO -   股票池大小: 200
+2026-06-13 14:58:18,023 - thousand-times - INFO -   请求延迟: 1.0-5.0秒
+2026-06-13 14:58:18,023 - thousand-times - INFO -   回溯天数: 60
+2026-06-13 14:58:18,023 - thousand-times - INFO - 开始并行获取股票池、ETF池、新闻...
+2026-06-13 14:58:18,023 - thousand-times - INFO - 开始获取股票池...
+2026-06-13 14:58:18,028 - thousand-times - INFO - 使用 BaoStock 获取 ETF 510300 历史数据
+2026-06-13 14:58:18,367 - thousand-times - INFO - 使用 AKShare 获取股票数据
+2026-06-13 14:58:19,364 - thousand-times - INFO - 获取新闻 10 条
+2026-06-13 14:58:19,364 - thousand-times - INFO - 可信度过滤后剩余 4 条新闻
+login success!
+2026-06-13 14:58:25,010 - thousand-times - WARNING - AKShare 获取股票数据失败: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+2026-06-13 14:58:25,011 - thousand-times - INFO - 使用 BaoStock 获取股票数据
+login success!
+2026-06-13 14:58:29,632 - thousand-times - INFO - BaoStock 获取 510300 成功，共 76 条数据
+'utf-8' codec can't decode byte 0x8d in position 8192: invalid start byte
+接收数据异常，请稍后再试。
+2026-06-13 14:58:33,936 - thousand-times - ERROR - BaoStock 获取股票列表失败: 网络接收错误。
+2026-06-13 14:58:33,936 - thousand-times - ERROR - BaoStock 获取全市场数据失败: BaoStock 获取股票列表失败: 网络接收错误。
+'utf-8' codec can't decode byte 0xe6 in position 20: unexpected end of data
+接收数据异常，请稍后再试。
+2026-06-13 14:58:38,912 - thousand-times - INFO - 使用 BaoStock 获取 ETF 510500 历史数据
+login success!
+2026-06-13 14:58:48,551 - thousand-times - INFO - BaoStock 获取 510500 成功，共 76 条数据
+logout success!
+2026-06-13 14:58:54,421 - thousand-times - INFO - 使用 BaoStock 获取 ETF 159915 历史数据
+login success!
+2026-06-13 14:58:58,585 - thousand-times - INFO - BaoStock 获取 159915 成功，共 76 条数据
+logout success!
+2026-06-13 14:58:59,543 - thousand-times - INFO - 使用 BaoStock 获取 ETF 588000 历史数据
+login success!
+2026-06-13 14:59:09,662 - thousand-times - INFO - BaoStock 获取 588000 成功，共 76 条数据
+logout success!
+2026-06-13 14:59:12,341 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512480 历史数据
+login success!
+2026-06-13 14:59:20,417 - thousand-times - INFO - BaoStock 获取 512480 成功，共 76 条数据
+logout success!
+2026-06-13 14:59:22,258 - thousand-times - INFO - 使用 BaoStock 获取 ETF 516160 历史数据
+login success!
+2026-06-13 14:59:26,746 - thousand-times - INFO - BaoStock 获取 516160 成功，共 76 条数据
+logout success!
+2026-06-13 14:59:28,626 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512010 历史数据
+login success!
+2026-06-13 14:59:32,665 - thousand-times - INFO - BaoStock 获取 512010 成功，共 76 条数据
+logout success!
+2026-06-13 14:59:33,836 - thousand-times - INFO - 使用 BaoStock 获取 ETF 159928 历史数据
+login success!
+2026-06-13 14:59:43,141 - thousand-times - INFO - BaoStock 获取 159928 成功，共 76 条数据
+logout success!
+2026-06-13 14:59:45,682 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512660 历史数据
+login success!
+2026-06-13 14:59:55,013 - thousand-times - INFO - BaoStock 获取 512660 成功，共 76 条数据
+logout success!
+2026-06-13 14:59:57,941 - thousand-times - INFO - 使用 BaoStock 获取 ETF 510230 历史数据
+login success!
+2026-06-13 15:00:09,599 - thousand-times - INFO - BaoStock 获取 510230 成功，共 76 条数据
+logout success!
+2026-06-13 15:00:12,736 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512200 历史数据
+login success!
+2026-06-13 15:00:24,789 - thousand-times - INFO - BaoStock 获取 512200 成功，共 76 条数据
+logout success!
+2026-06-13 15:00:27,276 - thousand-times - INFO - ETF池获取完成，共 11 只ETF
+[Errno 104] Connection reset by peer
+接收数据异常，请稍后再试。
+2026-06-13 15:03:52,418 - thousand-times - ERROR - 获取股票池失败: BaoStock 获取股票列表失败: 网络接收错误。
+2026-06-13 15:03:52,418 - thousand-times - INFO - CI 环境中股票池获取失败，将生成空报告
+2026-06-13 15:03:52,418 - thousand-times - INFO - ETF池获取完成，共 11 只ETF
+2026-06-13 15:03:52,418 - thousand-times - INFO - 新闻抓取完成，共 4 条
+2026-06-13 15:03:57,123 - thousand-times - INFO - 政策影响分析完成，共 4 条
+2026-06-13 15:03:57,124 - thousand-times - INFO - 开始分析个股...
+2026-06-13 15:03:57,124 - thousand-times - INFO - 股票池为空，跳过个股分析
+2026-06-13 15:03:57,124 - thousand-times - INFO - 个股分析完成，共 0 只符合条件
+2026-06-13 15:03:57,124 - thousand-times - INFO - 开始分析ETF...
+2026-06-13 15:03:57,124 - thousand-times - INFO - 复用ETF K线缓存，共 11 只
+2026-06-13 15:03:57,127 - thousand-times - INFO - 使用 AKShare 获取 ETF 510300 份额数据
+2026-06-13 15:03:57,127 - thousand-times - WARNING - AKShare 获取 ETF 510300 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:03:57,127 - thousand-times - INFO - 使用 BaoStock 获取 ETF 510300 成交量数据作为代理
+login success!
+2026-06-13 15:04:07,086 - thousand-times - INFO - BaoStock 获取 510300 成功，共 76 条数据
+logout success!
+2026-06-13 15:04:10,483 - thousand-times - INFO - [1/11] 沪深300ETF (510300): 15分 (avoid)
+2026-06-13 15:04:10,486 - thousand-times - INFO - 使用 AKShare 获取 ETF 510500 份额数据
+2026-06-13 15:04:10,486 - thousand-times - WARNING - AKShare 获取 ETF 510500 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:04:10,486 - thousand-times - INFO - 使用 BaoStock 获取 ETF 510500 成交量数据作为代理
+login success!
+2026-06-13 15:04:21,442 - thousand-times - INFO - BaoStock 获取 510500 成功，共 76 条数据
+logout success!
+2026-06-13 15:04:24,783 - thousand-times - INFO - [2/11] 中证500ETF (510500): 15分 (avoid)
+2026-06-13 15:04:24,785 - thousand-times - INFO - 使用 AKShare 获取 ETF 159915 份额数据
+2026-06-13 15:04:24,786 - thousand-times - WARNING - AKShare 获取 ETF 159915 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:04:24,786 - thousand-times - INFO - 使用 BaoStock 获取 ETF 159915 成交量数据作为代理
+login success!
+2026-06-13 15:04:30,170 - thousand-times - INFO - BaoStock 获取 159915 成功，共 76 条数据
+logout success!
+2026-06-13 15:04:32,588 - thousand-times - INFO - [3/11] 创业板ETF (159915): 15分 (avoid)
+2026-06-13 15:04:32,590 - thousand-times - INFO - 使用 AKShare 获取 ETF 588000 份额数据
+2026-06-13 15:04:32,590 - thousand-times - WARNING - AKShare 获取 ETF 588000 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:04:32,591 - thousand-times - INFO - 使用 BaoStock 获取 ETF 588000 成交量数据作为代理
+login success!
+2026-06-13 15:04:42,779 - thousand-times - INFO - BaoStock 获取 588000 成功，共 76 条数据
+logout success!
+2026-06-13 15:04:45,746 - thousand-times - INFO - [4/11] 科创50ETF (588000): 15分 (avoid)
+2026-06-13 15:04:45,749 - thousand-times - INFO - 使用 AKShare 获取 ETF 512480 份额数据
+2026-06-13 15:04:45,749 - thousand-times - WARNING - AKShare 获取 ETF 512480 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:04:45,749 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512480 成交量数据作为代理
+login success!
+2026-06-13 15:04:51,071 - thousand-times - INFO - BaoStock 获取 512480 成功，共 76 条数据
+logout success!
+2026-06-13 15:04:54,158 - thousand-times - INFO - [5/11] 半导体ETF (512480): 15分 (avoid)
+2026-06-13 15:04:54,161 - thousand-times - INFO - 使用 AKShare 获取 ETF 516160 份额数据
+2026-06-13 15:04:54,161 - thousand-times - WARNING - AKShare 获取 ETF 516160 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:04:54,161 - thousand-times - INFO - 使用 BaoStock 获取 ETF 516160 成交量数据作为代理
+login success!
+2026-06-13 15:05:03,929 - thousand-times - INFO - BaoStock 获取 516160 成功，共 76 条数据
+logout success!
+2026-06-13 15:05:07,605 - thousand-times - INFO - [6/11] 新能源ETF (516160): 15分 (avoid)
+2026-06-13 15:05:07,607 - thousand-times - INFO - 使用 AKShare 获取 ETF 512010 份额数据
+2026-06-13 15:05:07,607 - thousand-times - WARNING - AKShare 获取 ETF 512010 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:05:07,607 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512010 成交量数据作为代理
+login success!
+2026-06-13 15:05:18,569 - thousand-times - INFO - BaoStock 获取 512010 成功，共 76 条数据
+logout success!
+2026-06-13 15:05:21,663 - thousand-times - INFO - [7/11] 医药ETF (512010): 15分 (avoid)
+2026-06-13 15:05:21,665 - thousand-times - INFO - 使用 AKShare 获取 ETF 159928 份额数据
+2026-06-13 15:05:21,665 - thousand-times - WARNING - AKShare 获取 ETF 159928 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:05:21,665 - thousand-times - INFO - 使用 BaoStock 获取 ETF 159928 成交量数据作为代理
+login success!
+2026-06-13 15:05:31,545 - thousand-times - INFO - BaoStock 获取 159928 成功，共 76 条数据
+logout success!
+2026-06-13 15:05:38,391 - thousand-times - INFO - [8/11] 消费ETF (159928): 13分 (avoid)
+2026-06-13 15:05:38,394 - thousand-times - INFO - 使用 AKShare 获取 ETF 512660 份额数据
+2026-06-13 15:05:38,394 - thousand-times - WARNING - AKShare 获取 ETF 512660 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:05:38,394 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512660 成交量数据作为代理
+login success!
+2026-06-13 15:05:50,743 - thousand-times - INFO - BaoStock 获取 512660 成功，共 76 条数据
+logout success!
+2026-06-13 15:05:55,111 - thousand-times - INFO - [9/11] 军工ETF (512660): 20分 (avoid)
+2026-06-13 15:05:55,115 - thousand-times - INFO - 使用 AKShare 获取 ETF 510230 份额数据
+2026-06-13 15:05:55,115 - thousand-times - WARNING - AKShare 获取 ETF 510230 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:05:55,115 - thousand-times - INFO - 使用 BaoStock 获取 ETF 510230 成交量数据作为代理
+login success!
+2026-06-13 15:06:06,123 - thousand-times - INFO - BaoStock 获取 510230 成功，共 76 条数据
+logout success!
+2026-06-13 15:06:13,742 - thousand-times - INFO - [10/11] 金融ETF (510230): 25分 (avoid)
+2026-06-13 15:06:13,744 - thousand-times - INFO - 使用 AKShare 获取 ETF 512200 份额数据
+2026-06-13 15:06:13,744 - thousand-times - WARNING - AKShare 获取 ETF 512200 份额数据失败: fund_etf_fund_daily_em() got an unexpected keyword argument 'symbol'
+2026-06-13 15:06:13,744 - thousand-times - INFO - 使用 BaoStock 获取 ETF 512200 成交量数据作为代理
+login success!
+2026-06-13 15:06:21,255 - thousand-times - INFO - BaoStock 获取 512200 成功，共 76 条数据
+logout success!
+2026-06-13 15:06:24,201 - thousand-times - INFO - [11/11] 地产ETF (512200): 24分 (avoid)
+2026-06-13 15:06:24,201 - thousand-times - INFO - ETF分析完成，共 11 只符合条件
+2026-06-13 15:06:24,202 - thousand-times - INFO - 开始构建板块对比数据...
+2026-06-13 15:06:24,202 - thousand-times - INFO - 开始生成买卖信号...
+2026-06-13 15:06:24,221 - thousand-times - INFO - 买卖信号生成完成：个股 0 只，ETF 11 只
+2026-06-13 15:06:24,221 - thousand-times - INFO - 开始生成图表...
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 20013 (\N{CJK UNIFIED IDEOGRAPH-4E2D}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 35777 (\N{CJK UNIFIED IDEOGRAPH-8BC1}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 21019 (\N{CJK UNIFIED IDEOGRAPH-521B}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 19994 (\N{CJK UNIFIED IDEOGRAPH-4E1A}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 26495 (\N{CJK UNIFIED IDEOGRAPH-677F}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 31185 (\N{CJK UNIFIED IDEOGRAPH-79D1}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 27818 (\N{CJK UNIFIED IDEOGRAPH-6CAA}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 28145 (\N{CJK UNIFIED IDEOGRAPH-6DF1}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:25,621 - thousand-times - INFO - 图表已保存: charts/510500.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 21019 (\N{CJK UNIFIED IDEOGRAPH-521B}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 19994 (\N{CJK UNIFIED IDEOGRAPH-4E1A}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 26495 (\N{CJK UNIFIED IDEOGRAPH-677F}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:25,868 - thousand-times - INFO - 图表已保存: charts/159915.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 31185 (\N{CJK UNIFIED IDEOGRAPH-79D1}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 21019 (\N{CJK UNIFIED IDEOGRAPH-521B}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:26,111 - thousand-times - INFO - 图表已保存: charts/588000.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 27818 (\N{CJK UNIFIED IDEOGRAPH-6CAA}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 28145 (\N{CJK UNIFIED IDEOGRAPH-6DF1}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:26,464 - thousand-times - INFO - 图表已保存: charts/510300.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 21322 (\N{CJK UNIFIED IDEOGRAPH-534A}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 23548 (\N{CJK UNIFIED IDEOGRAPH-5BFC}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 20307 (\N{CJK UNIFIED IDEOGRAPH-4F53}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 26032 (\N{CJK UNIFIED IDEOGRAPH-65B0}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 33021 (\N{CJK UNIFIED IDEOGRAPH-80FD}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 28304 (\N{CJK UNIFIED IDEOGRAPH-6E90}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 21307 (\N{CJK UNIFIED IDEOGRAPH-533B}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 33647 (\N{CJK UNIFIED IDEOGRAPH-836F}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 28040 (\N{CJK UNIFIED IDEOGRAPH-6D88}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 36153 (\N{CJK UNIFIED IDEOGRAPH-8D39}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:27,286 - thousand-times - INFO - 图表已保存: charts/512480.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 26032 (\N{CJK UNIFIED IDEOGRAPH-65B0}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 33021 (\N{CJK UNIFIED IDEOGRAPH-80FD}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 28304 (\N{CJK UNIFIED IDEOGRAPH-6E90}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:27,532 - thousand-times - INFO - 图表已保存: charts/516160.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 21307 (\N{CJK UNIFIED IDEOGRAPH-533B}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 33647 (\N{CJK UNIFIED IDEOGRAPH-836F}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:27,863 - thousand-times - INFO - 图表已保存: charts/512010.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 28040 (\N{CJK UNIFIED IDEOGRAPH-6D88}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 36153 (\N{CJK UNIFIED IDEOGRAPH-8D39}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 32447 (\N{CJK UNIFIED IDEOGRAPH-7EBF}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22270 (\N{CJK UNIFIED IDEOGRAPH-56FE}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22343 (\N{CJK UNIFIED IDEOGRAPH-5747}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:28,126 - thousand-times - INFO - 图表已保存: charts/159928.png
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 20891 (\N{CJK UNIFIED IDEOGRAPH-519B}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 24037 (\N{CJK UNIFIED IDEOGRAPH-5DE5}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 37329 (\N{CJK UNIFIED IDEOGRAPH-91D1}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 34701 (\N{CJK UNIFIED IDEOGRAPH-878D}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 22320 (\N{CJK UNIFIED IDEOGRAPH-5730}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+/home/runner/work/thousand-times/thousand-times/src/chart_generator.py:214: UserWarning: Glyph 20135 (\N{CJK UNIFIED IDEOGRAPH-4EA7}) missing from font(s) DejaVu Sans.
+  fig.savefig(save_path, dpi=100, bbox_inches="tight", facecolor=str(CHART_STYLE["background"]))
+2026-06-13 15:06:28,691 - thousand-times - INFO - 图表已保存: charts/512660.png
+2026-06-13 15:06:28,806 - thousand-times - INFO - 图表已保存: charts/510230.png
+2026-06-13 15:06:28,902 - thousand-times - INFO - 图表已保存: charts/512200.png
+2026-06-13 15:06:28,902 - thousand-times - INFO - 图表生成完成
+2026-06-13 15:06:28,903 - thousand-times - INFO - 开始生成报告...
+2026-06-13 15:06:28,903 - thousand-times - INFO - 开始推送...
+2026-06-13 15:06:28,903 - thousand-times - INFO - PushPlus 请求: title=A股每日分析报告 — 2026-06-13, template=markdown, content_length=1241
+2026-06-13 15:06:29,920 - thousand-times - INFO - PushPlus 响应: code=200, msg=执行成功
+2026-06-13 15:06:29,920 - thousand-times - INFO - 推送成功: A股每日分析报告 — 2026-06-13
+2026-06-13 15:06:29,921 - thousand-times - INFO - 推送成功
+2026-06-13 15:06:29,921 - thousand-times - INFO - 缓存统计 — 命中: 0, 未命中: 0, 总计: 0, 命中率: 0.0%
+2026-06-13 15:06:29,921 - thousand-times - INFO - ==================================================
+2026-06-13 15:06:29,921 - thousand-times - INFO - A股每日分析完成
+2026-06-13 15:06:29,922 - thousand-times - INFO - ==================================================
+Analysis completed with exit code: 0
