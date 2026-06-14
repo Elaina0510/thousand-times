@@ -44,40 +44,51 @@ def _fetch_etf_hist(code: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _fetch_etf_fund_daily(code: str) -> pd.DataFrame:
-    """获取ETF份额数据。
+def _fetch_etf_fund_daily(code: str, timeout: int = 30) -> pd.DataFrame:
+    """获取ETF份额数据（带超时保护）。
 
     Args:
         code: ETF代码。
+        timeout: 超时时间（秒），默认30秒。
 
     Returns:
         包含份额数据的 DataFrame。
     """
-    # BaoStock 不提供份额数据，直接使用 AKShare
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+    def _fetch_akshare() -> pd.DataFrame:
+        import akshare as ak  # type: ignore[import-untyped]
+        return ak.fund_etf_fund_daily_em(symbol=code)
+
+    # 使用超时保护获取AKShare数据
     try:
         import akshare as ak  # type: ignore[import-untyped]
         logger.info(f"使用 AKShare 获取 ETF {code} 份额数据")
-        result: pd.DataFrame = ak.fund_etf_fund_daily_em(symbol=code)
-        return result
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_fetch_akshare)
+            result: pd.DataFrame = future.result(timeout=timeout)
+            return result
+    except FuturesTimeoutError:
+        logger.warning(f"AKShare 获取 ETF {code} 份额数据超时 ({timeout}秒)")
     except Exception as e:
         logger.warning(f"AKShare 获取 ETF {code} 份额数据失败: {e}")
 
-        # 尝试使用 BaoStock 获取历史数据（成交量作为代理）
-        try:
-            from baostock_data import get_etf_hist_baostock
-            logger.info(f"使用 BaoStock 获取 ETF {code} 成交量数据作为代理")
-            df = get_etf_hist_baostock(code, days=60)
-            if not df.empty:
-                # BaoStock 不提供份额数据，但我们可以使用成交量作为代理
-                df = df.rename(columns={
-                    '日期': 'date',
-                    '成交量': 'share_change',
-                })
-                return df
-        except Exception as e2:
-            logger.warning(f"BaoStock 获取 ETF {code} 成交量数据失败: {e2}")
+    # 回退到BaoStock获取成交量数据作为代理
+    try:
+        from baostock_data import get_etf_hist_baostock
+        logger.info(f"使用 BaoStock 获取 ETF {code} 成交量数据作为代理")
+        df = get_etf_hist_baostock(code, days=60)
+        if not df.empty:
+            # BaoStock 不提供份额数据，但我们可以使用成交量作为代理
+            df = df.rename(columns={
+                '日期': 'date',
+                '成交量': 'share_change',
+            })
+            return df
+    except Exception as e2:
+        logger.warning(f"BaoStock 获取 ETF {code} 成交量数据失败: {e2}")
 
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 
 # ETF 名称映射表
