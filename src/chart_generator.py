@@ -22,6 +22,9 @@ def _setup_chinese_font() -> None:
     """设置中文字体支持。"""
     import matplotlib.font_manager as fm
 
+    # 强制刷新字体缓存
+    fm.fontManager.__init__()
+
     # 尝试查找系统中可用的中文字体
     chinese_fonts = [
         'WenQuanYi Zen Hei',
@@ -33,19 +36,31 @@ def _setup_chinese_font() -> None:
         'PingFang SC',
         'Noto Sans CJK SC',
         'Source Han Sans CN',
+        'AR PL UMing CN',
+        'AR PL UKai CN',
     ]
 
     available_fonts = [f.name for f in fm.fontManager.ttflist]
 
     for font_name in chinese_fonts:
         if font_name in available_fonts:
-            plt.rcParams['font.sans-serif'] = [font_name] + plt.rcParams['font.sans-serif']
+            plt.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans']
+            plt.rcParams['font.family'] = 'sans-serif'
             plt.rcParams['axes.unicode_minus'] = False
             logger.info(f"使用中文字体: {font_name}")
             return
 
-    # 如果没有找到中文字体，尝试使用系统默认
-    logger.warning("未找到中文字体，图表中文可能显示异常")
+    # 尝试查找任何包含中文关键字的字体
+    for font in fm.fontManager.ttflist:
+        if any(keyword in font.name.lower() for keyword in ['cjk', 'chinese', 'cn', 'sc', 'tc', 'zen', 'hei', 'song', 'ming']):
+            plt.rcParams['font.sans-serif'] = [font.name, 'DejaVu Sans']
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['axes.unicode_minus'] = False
+            logger.info(f"使用中文字体: {font.name}")
+            return
+
+    # 如果没有找到中文字体，使用英文标题避免乱码
+    logger.warning("未找到中文字体，图表将使用英文标题")
     plt.rcParams['axes.unicode_minus'] = False
 
 # 初始化字体
@@ -196,6 +211,18 @@ def generate_chart(
     # 确保保存目录存在
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
 
+    # 检查是否支持中文
+    has_chinese_font = any(
+        keyword in plt.rcParams['font.sans-serif'][0].lower()
+        for keyword in ['wenquanyi', 'simhei', 'yahei', 'noto', 'source', 'cjk', 'zen', 'hei', 'song']
+    ) if plt.rcParams['font.sans-serif'] else False
+
+    # 生成图表标题
+    if has_chinese_font:
+        title = f"{name} ({code}) — K线图 + MA均线"
+    else:
+        title = f"{code} - K Line + MA"
+
     # 生成图表
     fig, axes = mpf.plot(
         df,
@@ -203,7 +230,7 @@ def generate_chart(
         style=style,
         addplot=add_plots,
         figsize=tuple(CHART_STYLE["figsize"]),
-        title=f"{name} ({code}) — K线图 + MA均线",
+        title=title,
         panel_ratios=panel_ratios,
         returnfig=True,
         volume=True,

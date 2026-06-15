@@ -5,8 +5,8 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 from datetime import datetime
-from pathlib import Path
 
 logger = logging.getLogger("thousand-times")
 
@@ -54,14 +54,8 @@ def generate_html_report(
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, "archive"), exist_ok=True)
 
-    # 收集图表文件
-    charts: dict[str, str] = {}
-    if os.path.exists(chart_dir):
-        for filename in os.listdir(chart_dir):
-            if filename.endswith(".png"):
-                code = filename.replace(".png", "")
-                filepath = os.path.join(chart_dir, filename)
-                charts[code] = _image_to_base64(filepath)
+    # 收集图表文件（只收集报告中涉及的股票/ETF）
+    charts = _collect_charts_for_report(report_text, chart_dir)
 
     # 生成HTML内容
     html_content = _build_html(report_text, charts, report_date)
@@ -80,28 +74,46 @@ def generate_html_report(
     return output_path
 
 
-def _build_html(report_text: str, charts: dict[str, str], report_date: str) -> str:
-    """构建HTML页面。
+def _collect_charts_for_report(report_text: str, chart_dir: str) -> dict[str, str]:
+    """从报告中提取股票/ETF代码，并收集对应的图表。
 
     Args:
-        report_text: Markdown格式的报告文本。
-        charts: 图表数据 {代码: base64数据}。
-        report_date: 报告日期。
+        report_text: 报告文本。
+        chart_dir: 图表目录。
 
     Returns:
-        HTML内容。
+        {代码: base64数据} 映射。
     """
-    # 解析报告文本，提取各部分
-    sections = _parse_report_sections(report_text)
+    charts: dict[str, str] = {}
 
-    # 构建图表HTML
-    charts_html = _build_charts_html(charts)
+    if not os.path.exists(chart_dir):
+        return charts
+
+    # 从报告中提取所有股票/ETF代码（格式如：600519、510300等）
+    code_pattern = r'\((\d{6})\)'
+    codes_in_report = set(re.findall(code_pattern, report_text))
+
+    # 只收集报告中涉及的图表
+    for code in codes_in_report:
+        filepath = os.path.join(chart_dir, f"{code}.png")
+        if os.path.exists(filepath):
+            charts[code] = _image_to_base64(filepath)
+
+    logger.info(f"收集到 {len(charts)} 个图表（报告中涉及 {len(codes_in_report)} 个代码）")
+    return charts
+
+
+def _build_html(report_text: str, charts: dict[str, str], report_date: str) -> str:
+    """构建HTML页面。"""
+    # 解析报告为各个信号块
+    signal_blocks = _parse_signal_blocks(report_text)
+    news_section = _parse_news_section(report_text)
+
+    # 构建信号HTML
+    signals_html = _build_signals_html(signal_blocks, charts)
 
     # 构建新闻HTML
-    news_html = _build_news_html(sections.get("news", ""))
-
-    # 构建股票信号HTML
-    signals_html = _build_signals_html(sections.get("signals", ""))
+    news_html = _build_news_html(news_section)
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -122,20 +134,12 @@ def _build_html(report_text: str, charts: dict[str, str], report_date: str) -> s
 
         <main>
             <section class="signals-section">
-                <h2>📈 买卖信号</h2>
                 {signals_html}
-            </section>
-
-            <section class="charts-section">
-                <h2>📉 K线图表</h2>
-                <div class="charts-grid">
-                    {charts_html}
-                </div>
             </section>
 
             <section class="news-section">
                 <h2>📰 今日政策要闻</h2>
-                {news_html}
+                {news_section if news_html else '<p class="no-data">暂无新闻数据</p>'}
             </section>
         </main>
 
@@ -148,156 +152,198 @@ def _build_html(report_text: str, charts: dict[str, str], report_date: str) -> s
 </html>"""
 
 
-def _parse_report_sections(report_text: str) -> dict[str, str]:
-    """解析报告文本为各个部分。
+def _parse_signal_blocks(report_text: str) -> list[dict]:
+    """解析报告为信号块列表。
 
-    Args:
-        report_text: 报告文本。
+    每个信号块包含：区域标题、股票信息、图表代码。
 
     Returns:
-        各部分内容的字典。
+        [{"zone": "买入区", "emoji": "🟢", "stocks": [{"code": "600519", "content": "..."}]}]
     """
-    sections: dict[str, str] = {
-        "signals": "",
-        "news": "",
-    }
+    blocks: list[dict] = []
+    current_block: dict | None = None
 
-    lines = report_text.split("\n")
-    current_section = "signals"
-    signal_lines: list[str] = []
-    news_lines: list[str] = []
+    # 匹配区域标题：🟢 买入区、🟡 观望区、🔴 卖出区
+    zone_pattern = r'^([🟢🟡🔴])\s+(买入区|观望区|卖出区)'
+    # 匹配股票代码：(600519)
+    code_pattern = r'\((\d{6})\)'
+    # 匹配分隔线
+    separator_pattern = r'^━+$'
 
-    for line in lines:
-        if "📰" in line or "政策要闻" in line:
-            current_section = "news"
-        elif "⚠️" in line and "以上分析仅供参考" in line:
+    for line in report_text.split('\n'):
+        line = line.strip()
+
+        if not line:
             continue
 
-        if current_section == "signals":
-            signal_lines.append(line)
-        elif current_section == "news":
-            news_lines.append(line)
+        # 检测分隔线
+        if re.match(separator_pattern, line):
+            continue
 
-    sections["signals"] = "\n".join(signal_lines)
-    sections["news"] = "\n".join(news_lines)
+        # 检测区域标题
+        zone_match = re.match(zone_pattern, line)
+        if zone_match:
+            emoji, zone_name = zone_match.groups()
+            current_block = {
+                "zone": zone_name,
+                "emoji": emoji,
+                "stocks": [],
+            }
+            blocks.append(current_block)
+            continue
 
-    return sections
+        # 检测股票/ETF条目
+        if line.startswith('【') and current_block is not None:
+            code_match = re.search(code_pattern, line)
+            code = code_match.group(1) if code_match else ""
+
+            current_block["stocks"].append({
+                "code": code,
+                "content": line,
+            })
+
+    return blocks
 
 
-def _build_charts_html(charts: dict[str, str]) -> str:
-    """构建图表HTML。
+def _parse_news_section(report_text: str) -> str:
+    """提取新闻部分。"""
+    if '📰' not in report_text:
+        return ""
 
-    Args:
-        charts: 图表数据。
+    # 找到新闻部分的开始
+    lines = report_text.split('\n')
+    news_start = -1
+    for i, line in enumerate(lines):
+        if '📰' in line or '政策要闻' in line:
+            news_start = i
+            break
 
-    Returns:
-        图表HTML。
-    """
-    if not charts:
-        return '<p class="no-data">暂无图表数据</p>'
+    if news_start == -1:
+        return ""
+
+    # 提取新闻内容（到免责声明之前）
+    news_lines = []
+    for line in lines[news_start:]:
+        if '⚠️' in line and '以上分析仅供参考' in line:
+            break
+        if '━━━' in line and news_lines:  # 避免开头的分隔线
+            break
+        news_lines.append(line)
+
+    return '\n'.join(news_lines)
+
+
+def _build_signals_html(blocks: list[dict], charts: dict[str, str]) -> str:
+    """构建信号HTML，每个股票下方附带对应图表。"""
+    if not blocks:
+        return '<p class="no-data">暂无信号数据</p>'
 
     html_parts: list[str] = []
-    for code, data_uri in sorted(charts.items()):
-        if data_uri:
-            html_parts.append(f"""
-            <div class="chart-card">
-                <h3>{code}</h3>
-                <img src="{data_uri}" alt="{code} K线图" loading="lazy">
-            </div>
-            """)
 
-    return "\n".join(html_parts)
+    for block in blocks:
+        zone_name = block["zone"]
+        emoji = block["emoji"]
+
+        # 区域标题
+        zone_class = {
+            "买入区": "buy-zone",
+            "观望区": "watch-zone",
+            "卖出区": "sell-zone",
+        }.get(zone_name, "")
+
+        html_parts.append(f'<div class="zone-block">')
+        html_parts.append(f'<h2 class="{zone_class}">{emoji} {zone_name}</h2>')
+
+        # 遍历该区域下的股票
+        for stock in block["stocks"]:
+            code = stock["code"]
+            content = stock["content"]
+
+            # 解析股票内容
+            stock_html = _format_stock_item(content)
+
+            html_parts.append(f'<div class="stock-item">')
+            html_parts.append(f'<div class="stock-info">{stock_html}</div>')
+
+            # 如果有对应图表，添加图表
+            if code and code in charts:
+                html_parts.append(f'<div class="chart-container">')
+                html_parts.append(f'<img src="{charts[code]}" alt="{code} K线图" loading="lazy">')
+                html_parts.append(f'</div>')
+
+            html_parts.append(f'</div>')
+
+        html_parts.append(f'</div>')
+
+    return '\n'.join(html_parts)
+
+
+def _format_stock_item(content: str) -> str:
+    """格式化单个股票条目。"""
+    # 将【1】格式转换为带样式的HTML
+    content = re.sub(r'【(\d+)】', r'<span class="stock-index">【\1】</span>', content)
+
+    # 转换链接
+    content = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank">\1</a>', content)
+
+    # 转换关键价位行
+    content = content.replace('├', '<span class="separator">├</span>')
+    content = content.replace('└', '<span class="separator">└</span>')
+
+    # 转换信号区间emoji
+    content = content.replace('🟢', '<span class="emoji-green">🟢</span>')
+    content = content.replace('🟡', '<span class="emoji-yellow">🟡</span>')
+    content = content.replace('🔴', '<span class="emoji-red">🔴</span>')
+
+    # 用换行分隔各部分
+    content = content.replace(' ├', '<br>├')
+    content = content.replace(' └', '<br>└')
+
+    return content
 
 
 def _build_news_html(news_text: str) -> str:
-    """构建新闻HTML。
-
-    Args:
-        news_text: 新闻文本。
-
-    Returns:
-        新闻HTML。
-    """
+    """构建新闻HTML。"""
     if not news_text.strip():
-        return '<p class="no-data">暂无新闻数据</p>'
+        return ""
 
     lines = news_text.strip().split("\n")
     items: list[str] = []
 
     for line in lines:
         line = line.strip()
-        if not line:
+        if not line or '📰' in line:
             continue
 
-        # 解析新闻行：序号. 标题 → 方向行业 [详情](链接)
-        if ". " in line and "→" in line:
-            # 提取链接
-            link = ""
-            if "[详情](" in line:
-                start = line.find("[详情](") + 7
-                end = line.find(")", start)
-                if end > start:
-                    link = line[start:end]
-                    line = line[:line.find("[详情](")].strip()
+        # 提取链接
+        link = ""
+        link_pattern = r'\[详情\]\(([^)]+)\)'
+        link_match = re.search(link_pattern, line)
+        if link_match:
+            link = link_match.group(1)
+            line = re.sub(r'\s*\[详情\]\([^)]+\)', '', line)
 
-            items.append(f'<li>{line}{f" <a href=\'{link}\' target=\'_blank\'>🔗</a>" if link else ""}</li>')
-        elif line.startswith(("1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.")):
-            items.append(f"<li>{line}</li>")
+        if line:
+            link_html = f' <a href="{link}" target="_blank" class="news-link">🔗</a>' if link else ""
+            items.append(f'<li>{line}{link_html}</li>')
 
     if items:
-        return f"<ul>{''.join(items)}</ul>"
-    return f"<pre>{news_text}</pre>"
-
-
-def _build_signals_html(signals_text: str) -> str:
-    """构建信号HTML。
-
-    Args:
-        signals_text: 信号文本。
-
-    Returns:
-        信号HTML。
-    """
-    if not signals_text.strip():
-        return '<p class="no-data">暂无信号数据</p>'
-
-    # 将Markdown转换为简单HTML
-    html = signals_text
-
-    # 转换标题
-    html = html.replace("🟢 买入区", '<h3 class="buy-zone">🟢 买入区</h3>')
-    html = html.replace("🟡 观望区", '<h3 class="watch-zone">🟡 观望区</h3>')
-    html = html.replace("🔴 卖出区", '<h3 class="sell-zone">🔴 卖出区</h3>')
-
-    # 转换分隔线
-    html = html.replace("━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "<hr>")
-
-    # 转换链接
-    import re
-    html = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank">\1</a>', html)
-
-    # 转换换行
-    html = html.replace("\n", "<br>")
-
-    return f'<div class="signals-content">{html}</div>'
+        return "<ul>" + "\n".join(items) + "</ul>"
+    return ""
 
 
 def _get_css() -> str:
-    """获取CSS样式。
-
-    Returns:
-        CSS样式字符串。
-    """
+    """获取CSS样式。"""
     return """
         :root {
-            --bg-color: #1a1a2e;
-            --card-bg: #16213e;
-            --text-color: #eaeaea;
-            --text-secondary: #a0a0a0;
-            --accent-green: #00d253;
-            --accent-yellow: #ffab00;
-            --accent-red: #fc424a;
-            --border-color: #2d3748;
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --text-color: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-green: #3fb950;
+            --accent-yellow: #d29922;
+            --accent-red: #f85149;
+            --border-color: #30363d;
         }
 
         * {
@@ -307,91 +353,96 @@ def _get_css() -> str:
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", "Microsoft YaHei", sans-serif;
             background-color: var(--bg-color);
             color: var(--text-color);
             line-height: 1.6;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 900px;
             margin: 0 auto;
             padding: 20px;
         }
 
         header {
             text-align: center;
-            padding: 40px 0;
+            padding: 30px 0;
             border-bottom: 1px solid var(--border-color);
-            margin-bottom: 40px;
+            margin-bottom: 30px;
         }
 
         header h1 {
-            font-size: 2em;
+            font-size: 1.8em;
             margin-bottom: 10px;
         }
 
         header .date {
             color: var(--text-secondary);
-            font-size: 1.2em;
+            font-size: 1.1em;
         }
 
         section {
-            margin-bottom: 40px;
+            margin-bottom: 30px;
         }
 
         section h2 {
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
+            font-size: 1.4em;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
             border-bottom: 2px solid var(--border-color);
         }
 
-        .charts-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 20px;
+        .zone-block {
+            margin-bottom: 25px;
         }
 
-        .chart-card {
+        .buy-zone { color: var(--accent-green); }
+        .watch-zone { color: var(--accent-yellow); }
+        .sell-zone { color: var(--accent-red); }
+
+        .stock-item {
             background: var(--card-bg);
             border-radius: 8px;
             padding: 15px;
+            margin-bottom: 15px;
             border: 1px solid var(--border-color);
         }
 
-        .chart-card h3 {
-            margin-bottom: 10px;
+        .stock-info {
+            font-size: 0.95em;
+            line-height: 1.8;
+        }
+
+        .stock-index {
+            font-weight: bold;
+            color: var(--text-color);
+        }
+
+        .separator {
             color: var(--text-secondary);
         }
 
-        .chart-card img {
-            width: 100%;
+        .emoji-green { color: var(--accent-green); }
+        .emoji-yellow { color: var(--accent-yellow); }
+        .emoji-red { color: var(--accent-red); }
+
+        .chart-container {
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        .chart-container img {
+            max-width: 100%;
             height: auto;
-            border-radius: 4px;
-        }
-
-        .signals-content {
-            background: var(--card-bg);
-            padding: 20px;
-            border-radius: 8px;
+            border-radius: 6px;
             border: 1px solid var(--border-color);
-        }
-
-        .buy-zone { color: var(--accent-green); margin: 15px 0 10px; }
-        .watch-zone { color: var(--accent-yellow); margin: 15px 0 10px; }
-        .sell-zone { color: var(--accent-red); margin: 15px 0 10px; }
-
-        hr {
-            border: none;
-            border-top: 1px solid var(--border-color);
-            margin: 15px 0;
         }
 
         .news-section ul {
             list-style: none;
             background: var(--card-bg);
-            padding: 20px;
+            padding: 15px;
             border-radius: 8px;
             border: 1px solid var(--border-color);
         }
@@ -399,18 +450,20 @@ def _get_css() -> str:
         .news-section li {
             padding: 10px 0;
             border-bottom: 1px solid var(--border-color);
+            font-size: 0.95em;
         }
 
         .news-section li:last-child {
             border-bottom: none;
         }
 
-        .news-section a {
+        .news-link {
             color: var(--accent-yellow);
             text-decoration: none;
+            font-size: 1.1em;
         }
 
-        .news-section a:hover {
+        .news-link:hover {
             text-decoration: underline;
         }
 
@@ -424,23 +477,33 @@ def _get_css() -> str:
 
         footer {
             text-align: center;
-            padding: 40px 0;
+            padding: 30px 0;
             border-top: 1px solid var(--border-color);
-            margin-top: 40px;
+            margin-top: 30px;
             color: var(--text-secondary);
+            font-size: 0.9em;
         }
 
         footer p {
             margin: 5px 0;
         }
 
+        a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
         @media (max-width: 768px) {
-            .charts-grid {
-                grid-template-columns: 1fr;
+            .container {
+                padding: 15px;
             }
 
             header h1 {
-                font-size: 1.5em;
+                font-size: 1.4em;
             }
         }
     """
@@ -448,7 +511,7 @@ def _get_css() -> str:
 
 if __name__ == "__main__":
     # 测试用例
-    test_report = """📊 A股每日分析报告 — 2026-06-13
+    test_report = """📊 A股每日分析报告 — 2026-06-14
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -460,9 +523,25 @@ if __name__ == "__main__":
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+🟡 观望区（综合评分 30~70）
+
+【1】比亚迪 (002594) — 综合评分：55分
+├ 技术信号：无明显信号
+└ 🔗 同花顺详情：https://stockpage.10jqka.com.cn/002594/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔴 卖出区（综合评分 < 30）
+
+【1】浦发银行 (600000) — 综合评分：25分
+├ 风险信号：MA5/10死叉
+└ 🔗 同花顺详情：https://stockpage.10jqka.com.cn/600000/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 📰 今日政策要闻
 
-1. 央行宣布降准0.5个百分点 → 利好银行、地产 [详情](https://example.com/news1)
+1. 央行宣布降准0.5个百分点 → 利好银行 [详情](https://example.com/news1)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ 以上分析仅供参考，不构成投资建议。投资有风险，入市需谨慎。"""
