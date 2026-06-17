@@ -40,6 +40,10 @@ def _make_kline_data(
         dif=dif if dif else [0.0] * n,
         dea=dea if dea else [0.0] * n,
         macd_hist=macd_hist if macd_hist else [0.0] * n,
+        atr=[0.0] * n,
+        bb_upper=[105.0] * n,
+        bb_lower=[95.0] * n,
+        bb_width=[10.0] * n,
     )
 
 

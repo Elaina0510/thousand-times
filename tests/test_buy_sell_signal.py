@@ -37,6 +37,10 @@ def _make_kline_data(
         dif=[0.0] * n,
         dea=[0.0] * n,
         macd_hist=[0.0] * n,
+        atr=[0.0] * n,
+        bb_upper=[105.0] * n,
+        bb_lower=[95.0] * n,
+        bb_width=[10.0] * n,
     )
 
 

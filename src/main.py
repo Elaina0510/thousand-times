@@ -31,7 +31,7 @@ from cache_manager import (
     log_cache_stats,
 )
 from chart_generator import generate_chart
-from config import AppConfig, load_config
+from config import AppConfig, ScoreWeightConfig, load_config
 from etf_analyzer import EtfInfo, get_etf_fund_flow, get_etf_pool
 from fundamental_analysis import calc_fundamental_score, get_fundamental_data, get_fundamental_data_batch
 from news_analysis import PolicyImpact, analyze_policy_impact, fetch_news, filter_by_credibility
@@ -102,6 +102,7 @@ def analyze_single_stock(
     config: AppConfig,
     kline_cache: dict[str, pd.DataFrame] | None = None,
     fund_cache: dict[str, any] | None = None,
+    score_weight: ScoreWeightConfig | None = None,
 ) -> ScoreResult:
     """分析单只股票。
 
@@ -111,6 +112,7 @@ def analyze_single_stock(
         config: 应用配置。
         kline_cache: 预获取的K线数据缓存。
         fund_cache: 预获取的基本面数据缓存。
+        score_weight: 评分权重（可选，用于市场环境动态调整）。
 
     Returns:
         评分结果。
@@ -144,10 +146,11 @@ def analyze_single_stock(
     from scoring import get_industry_trend_score
     industry_score = get_industry_trend_score(industry, config.etf_pool, config)
 
-    # 综合评分
+    # 综合评分（使用动态调整后的权重）
+    weights = score_weight if score_weight is not None else config.score_weight
     total = calc_total_score(
         tech_score, fund_score, news_score, industry_score,
-        None, False, config.score_weight,
+        None, False, weights,
     )
 
     # 生成新闻摘要（支持 BaoStock 行业格式匹配）
@@ -346,7 +349,21 @@ def main() -> None:
         else:
             raise
 
-    # 5. 分析个股
+    # 5. 判断市场环境（基于中证全指，动态调整评分权重）
+    try:
+        from market_regime import judge_market_regime
+        market_regime = judge_market_regime(config)
+        logger.info(f"市场环境: {market_regime.description}")
+    except Exception as e:
+        logger.warning(f"市场环境判断失败，使用默认权重: {e}")
+
+        class _FallbackRegime:
+            state = "sideways"
+            adjusted_weights = config.score_weight
+
+        market_regime = _FallbackRegime()
+
+    # 6. 分析个股
     logger.info("开始分析个股...")
     stock_results: list[ScoreResult] = []
     kline_cache: dict[str, pd.DataFrame] = {}
@@ -420,11 +437,27 @@ def main() -> None:
         cached_fund = get_cached_data(fund_cache_key, ttl=FUND_CACHE_TTL)
         if cached_fund is not None and isinstance(cached_fund, dict):
             logger.info(f"基本面数据缓存命中，共 {len(cached_fund)} 只")
-            from fundamental_analysis import FundamentalData
+            from fundamental_analysis import FundamentalData, _empty_fundamental_data
             fund_cache = {}
             for code, d in cached_fund.items():
                 if isinstance(d, dict):
-                    fund_cache[code] = FundamentalData(**d)
+                    # 兼容旧缓存格式（pe_ttm→roe, pb→eps）
+                    if 'pe_ttm' in d and 'roe' not in d:
+                        d = {
+                            'roe': d.pop('pe_ttm'),
+                            'eps': d.pop('pb', 0),
+                            **d,
+                        }
+                    # 补充新增字段的默认值（旧缓存可能缺失）
+                    for key, default in [
+                        ('debt_ratio', None), ('cash_flow', None), ('gross_margin', None),
+                    ]:
+                        d.setdefault(key, default)
+                    try:
+                        fund_cache[code] = FundamentalData(**d)
+                    except TypeError:
+                        logger.warning(f"缓存数据格式异常: {code}，跳过")
+                        fund_cache[code] = _empty_fundamental_data()
                 else:
                     fund_cache[code] = d
         else:
@@ -435,8 +468,10 @@ def main() -> None:
             # 序列化 FundamentalData 为 dict 以便 JSON 存储
             fund_cacheSerializable = {
                 k: {
-                    "pe_ttm": v.pe_ttm, "pb": v.pb, "market_cap": v.market_cap,
+                    "roe": v.roe, "eps": v.eps, "market_cap": v.market_cap,
                     "profit_growth": v.profit_growth, "revenue_growth": v.revenue_growth,
+                    "debt_ratio": v.debt_ratio, "cash_flow": v.cash_flow,
+                    "gross_margin": v.gross_margin,
                 }
                 for k, v in fund_cache.items()
             }
@@ -445,7 +480,10 @@ def main() -> None:
 
         for idx, (_, stock) in enumerate(stock_pool.iterrows()):
             try:
-                result = analyze_single_stock(stock, policy_impacts, config, kline_cache, fund_cache)
+                result = analyze_single_stock(
+                    stock, policy_impacts, config, kline_cache, fund_cache,
+                    score_weight=market_regime.adjusted_weights,
+                )
                 stock_results.append(result)
                 logger.info(
                     f"[{idx + 1}/{len(stock_pool)}] {result.name} ({result.code}): "

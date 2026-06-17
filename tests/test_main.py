@@ -55,6 +55,10 @@ def _make_kline_data() -> KlineData:
         dif=[0.5, 0.6, 0.7, 0.8, 0.9],
         dea=[0.3, 0.4, 0.5, 0.6, 0.7],
         macd_hist=[0.4, 0.4, 0.4, 0.4, 0.4],
+        atr=[0.0] * 5,
+        bb_upper=[105.0] * 5,
+        bb_lower=[95.0] * 5,
+        bb_width=[10.0] * 5,
     )
 
 

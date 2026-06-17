@@ -63,6 +63,10 @@ def _make_kline_data(n: int = 60) -> KlineData:
         dif=dif.tolist(),
         dea=dea.tolist(),
         macd_hist=macd_hist.tolist(),
+        atr=[0.0] * n,
+        bb_upper=[105.0] * n,
+        bb_lower=[95.0] * n,
+        bb_width=[10.0] * n,
     )
 
 

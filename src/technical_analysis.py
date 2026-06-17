@@ -1,4 +1,12 @@
-"""技术指标计算模块 — 计算MA、MACD、成交量等技术指标。"""
+"""技术指标计算模块 — 计算MA、MACD、成交量、波动率等技术指标。
+
+修复项：
+- MA60 使用 min_periods=60，避免前段数据不可靠
+- MACD底背离检测：使用局部极值点，要求两次探底确认
+- 天量见天价：使用95%分位数替代精确等于
+- 均线信号冲突：金叉/死叉同时存在时，只保留最近发生的
+- 新增ATR和布林带宽度作为波动率指标
+"""
 
 from __future__ import annotations
 
@@ -32,6 +40,11 @@ class KlineData:
     dif: list[float]
     dea: list[float]
     macd_hist: list[float]
+    # 波动率指标
+    atr: list[float]  # 平均真实波幅（14日）
+    bb_upper: list[float]  # 布林带上轨
+    bb_lower: list[float]  # 布林带下轨
+    bb_width: list[float]  # 布林带宽度 = (上轨-下轨)/中轨
 
 
 def _fetch_stock_hist_ashare(code: str, days: int) -> pd.DataFrame:
@@ -91,17 +104,20 @@ def _calc_ema(series: pd.Series, n: int) -> pd.Series:
     return series.ewm(span=n, adjust=False).mean()
 
 
-def _calc_ma(series: pd.Series, n: int) -> pd.Series:
+def _calc_ma(series: pd.Series, n: int, min_periods: int | None = None) -> pd.Series:
     """计算简单移动平均线（MA）。
 
     Args:
         series: 价格序列。
         n: 周期。
+        min_periods: 最小数据量（默认等于n，确保MA有效）。
 
     Returns:
         MA 序列。
     """
-    return series.rolling(window=n, min_periods=1).mean()
+    if min_periods is None:
+        min_periods = n
+    return series.rolling(window=n, min_periods=min_periods).mean()
 
 
 def _calc_macd(closes: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
@@ -121,6 +137,48 @@ def _calc_macd(closes: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
     return dif, dea, macd_hist
 
 
+def _calc_atr(highs: pd.Series, lows: pd.Series, closes: pd.Series, period: int = 14) -> pd.Series:
+    """计算平均真实波幅（ATR）。
+
+    Args:
+        highs: 最高价序列。
+        lows: 最低价序列。
+        closes: 收盘价序列。
+        period: 计算周期，默认14日。
+
+    Returns:
+        ATR 序列。
+    """
+    prev_close = closes.shift(1)
+    tr1 = highs - lows
+    tr2 = (highs - prev_close).abs()
+    tr3 = (lows - prev_close).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return true_range.rolling(window=period, min_periods=1).mean()
+
+
+def _calc_bollinger(
+    closes: pd.Series, period: int = 20, num_std: float = 2.0
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """计算布林带。
+
+    Args:
+        closes: 收盘价序列。
+        period: 中轨周期，默认20日。
+        num_std: 标准差倍数，默认2.0。
+
+    Returns:
+        (上轨, 下轨, 布林带宽度) 三个序列。宽度 = (上轨-下轨)/中轨。
+    """
+    mid = closes.rolling(window=period, min_periods=1).mean()
+    std = closes.rolling(window=period, min_periods=1).std()
+    upper = mid + num_std * std
+    lower = mid - num_std * std
+    # 布林带宽度：归一化波动率
+    width = ((upper - lower) / mid * 100).where(mid > 0, 0)
+    return upper, lower, width
+
+
 def get_kline_data(code: str, days: int = 60, is_etf: bool = False) -> KlineData:
     """获取K线数据并计算技术指标。
 
@@ -135,9 +193,7 @@ def get_kline_data(code: str, days: int = 60, is_etf: bool = False) -> KlineData
     Raises:
         RuntimeError: 数据获取失败。
     """
-    # 获取历史行情
     df = _fetch_etf_hist_ashare(code, days) if is_etf else _fetch_stock_hist_ashare(code, days)
-
     return _df_to_kline_data(df, code, days)
 
 
@@ -199,21 +255,27 @@ def _df_to_kline_data(df: pd.DataFrame, code: str, days: int = 60) -> KlineData:
 
     # 计算技术指标
     closes = df["close"].astype(float)
+    highs = df["high"].astype(float)
+    lows = df["low"].astype(float)
 
-    # MA
-    ma5 = _calc_ma(closes, 5)
-    ma10 = _calc_ma(closes, 10)
-    ma20 = _calc_ma(closes, 20)
-    ma60 = _calc_ma(closes, 60)
+    # MA — MA60 使用 min_periods=60，数据不足时返回 NaN
+    ma5 = _calc_ma(closes, 5, min_periods=1)
+    ma10 = _calc_ma(closes, 10, min_periods=1)
+    ma20 = _calc_ma(closes, 20, min_periods=1)
+    ma60 = _calc_ma(closes, 60, min_periods=60)
 
     # MACD
     dif, dea, macd_hist = _calc_macd(closes)
 
+    # 波动率指标
+    atr = _calc_atr(highs, lows, closes, period=14)
+    bb_upper, bb_lower, bb_width = _calc_bollinger(closes, period=20)
+
     return KlineData(
         dates=df["date"].astype(str).tolist(),
         opens=df["open"].astype(float).tolist(),
-        highs=df["high"].astype(float).tolist(),
-        lows=df["low"].astype(float).tolist(),
+        highs=highs.tolist(),
+        lows=lows.tolist(),
         closes=closes.tolist(),
         volumes=df["volume"].astype(float).tolist(),
         ma5=ma5.tolist(),
@@ -223,11 +285,37 @@ def _df_to_kline_data(df: pd.DataFrame, code: str, days: int = 60) -> KlineData:
         dif=dif.tolist(),
         dea=dea.tolist(),
         macd_hist=macd_hist.tolist(),
+        atr=atr.tolist(),
+        bb_upper=bb_upper.tolist(),
+        bb_lower=bb_lower.tolist(),
+        bb_width=bb_width.tolist(),
     )
+
+
+def _find_local_minima(arr: np.ndarray, order: int = 3) -> list[int]:
+    """寻找局部极小值点的索引。
+
+    Args:
+        arr: 数据数组。
+        order: 比较两侧的数据点数（越大越严格）。
+
+    Returns:
+        局部极小值点的索引列表。
+    """
+    minima = []
+    for i in range(order, len(arr) - order):
+        if arr[i] == min(arr[i - order: i + order + 1]):
+            minima.append(i)
+    return minima
 
 
 def calc_technical_signals(kline: KlineData) -> TechnicalSignals:
     """根据K线数据计算所有技术信号。
+
+    修复项：
+    - MA金叉/死叉冲突：只保留窗口内最后发生的信号
+    - MACD底背离：使用局部极值点检测，要求两次探底确认
+    - 天量见天价：使用95%分位数替代精确等于
 
     Args:
         kline: K线数据。
@@ -250,60 +338,75 @@ def calc_technical_signals(kline: KlineData) -> TechnicalSignals:
 
     signals = TechnicalSignals()
 
-    # MA5/10 金叉（近3日）
-    for i in range(max(0, n - 3), n):
-        if i > 0 and ma5[i] > ma10[i] and ma5[i - 1] <= ma10[i - 1]:
-            signals.ma5_10_golden = True
-            break
+    # ── MA5/10 金叉/死叉（近3日，冲突时取最后发生的） ──
+    last_ma_cross = None  # "golden" or "death"
+    for i in range(max(1, n - 3), n):
+        if ma5[i] > ma10[i] and ma5[i - 1] <= ma10[i - 1]:
+            last_ma_cross = "golden"
+        if ma5[i] < ma10[i] and ma5[i - 1] >= ma10[i - 1]:
+            last_ma_cross = "death"
+    if last_ma_cross == "golden":
+        signals.ma5_10_golden = True
+    elif last_ma_cross == "death":
+        signals.ma5_10_death = True
 
-    # MA5/10 死叉（近3日）
-    for i in range(max(0, n - 3), n):
-        if i > 0 and ma5[i] < ma10[i] and ma5[i - 1] >= ma10[i - 1]:
-            signals.ma5_10_death = True
-            break
+    # ── MA20/60 金叉（近5日） ──
+    for i in range(max(1, n - 5), n):
+        if not np.isnan(ma60[i]) and not np.isnan(ma60[i - 1]):
+            if ma20[i] > ma60[i] and ma20[i - 1] <= ma60[i - 1]:
+                signals.ma20_60_golden = True
+                break
 
-    # MA20/60 金叉（近5日）
-    for i in range(max(0, n - 5), n):
-        if i > 0 and ma20[i] > ma60[i] and ma20[i - 1] <= ma60[i - 1]:
-            signals.ma20_60_golden = True
-            break
+    # ── 多头排列（最新一日，MA60有效时才判断） ──
+    if not any(np.isnan([ma5[-1], ma10[-1], ma20[-1], ma60[-1]])):
+        if ma5[-1] > ma10[-1] > ma20[-1] > ma60[-1]:
+            signals.bullish_alignment = True
 
-    # 多头排列（最新一日）
-    if ma5[-1] > ma10[-1] > ma20[-1] > ma60[-1]:
-        signals.bullish_alignment = True
-
-    # 股价站上MA20（最新一日）
+    # ── 股价站上MA20 ──
     if closes[-1] > ma20[-1]:
         signals.above_ma20 = True
 
-    # MACD 金叉（近3日）
-    for i in range(max(0, n - 3), n):
-        if i > 0 and dif[i] > dea[i] and dif[i - 1] <= dea[i - 1]:
-            signals.macd_golden = True
+    # ── MACD 金叉/死叉（近3日，冲突时取最后发生的） ──
+    last_macd_cross = None
+    for i in range(max(1, n - 3), n):
+        if dif[i] > dea[i] and dif[i - 1] <= dea[i - 1]:
+            last_macd_cross = "golden"
             # 零轴上方金叉
             if dif[i] > 0 and dea[i] > 0:
                 signals.macd_above_zero = True
-            break
+        if dif[i] < dea[i] and dif[i - 1] >= dea[i - 1]:
+            last_macd_cross = "death"
+    if last_macd_cross == "golden":
+        signals.macd_golden = True
+    elif last_macd_cross == "death":
+        signals.macd_death = True
 
-    # MACD 死叉（近3日）
-    for i in range(max(0, n - 3), n):
-        if i > 0 and dif[i] < dea[i] and dif[i - 1] >= dea[i - 1]:
-            signals.macd_death = True
-            break
+    # ── MACD 底背离（近20日，局部极值点检测） ──
+    lookback = min(20, n)
+    if lookback >= 10:
+        recent_closes = closes[-lookback:]
+        recent_macd = np.array(kline.macd_hist[-lookback:])
 
-    # MACD 底背离（近10日）
-    if n >= 10:
-        recent_10 = closes[-10:]
-        macd_10 = np.array(kline.macd_hist[-10:])
-        # 找到股价最低点
-        price_min_idx = np.argmin(recent_10)
-        # 找到MACD最低点
-        macd_min_idx = np.argmin(macd_10)
-        # 如果股价创新低但MACD不创新低，认为底背离
-        if price_min_idx > macd_min_idx and recent_10[price_min_idx] < recent_10[0]:
-            signals.macd_divergence = True
+        # 找到价格和MACD的局部极小值点
+        price_lows = _find_local_minima(recent_closes, order=3)
+        macd_lows = _find_local_minima(recent_macd, order=3)
 
-    # 成交量信号
+        if len(price_lows) >= 2 and len(macd_lows) >= 2:
+            # 取最近两个价格低点
+            p1_idx, p2_idx = price_lows[-2], price_lows[-1]
+            # 在MACD中找到对应时间窗口内的低点
+            m1_candidates = [m for m in macd_lows if abs(m - p1_idx) <= 3]
+            m2_candidates = [m for m in macd_lows if abs(m - p2_idx) <= 3]
+
+            if m1_candidates and m2_candidates:
+                m1_idx = m1_candidates[-1]
+                m2_idx = m2_candidates[-1]
+                # 底背离：价格创新低，MACD未创新低
+                if (recent_closes[p2_idx] < recent_closes[p1_idx]
+                        and recent_macd[m2_idx] > recent_macd[m1_idx]):
+                    signals.macd_divergence = True
+
+    # ── 成交量信号 ──
     if n >= 5:
         # 量比 = 当日成交量 / 近5日平均成交量
         avg_vol_5 = np.mean(volumes[-6:-1]) if n >= 6 else np.mean(volumes[-5:])
@@ -320,8 +423,9 @@ def calc_technical_signals(kline: KlineData) -> TechnicalSignals:
         if change_pct < -2 and volume_ratio > 2.0:
             signals.volume_down = True
 
-        # 天量见天价（成交量60日新高且股价高位）
-        if volumes[-1] == np.max(volumes) and closes[-1] > ma20[-1]:
+        # 天量见天价（成交量达到60日95%分位数且股价在MA20上方）
+        vol_95th = np.percentile(volumes, 95)
+        if volumes[-1] >= vol_95th and closes[-1] > ma20[-1]:
             signals.volume_peak = True
 
         # 缩量回调到位（回调至MA20附近±2%且量比 < 0.7）

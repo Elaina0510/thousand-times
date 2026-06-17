@@ -11,15 +11,15 @@ from fundamental_analysis import FundamentalData, calc_fundamental_score, get_fu
 
 
 def _make_financial_indicator() -> dict:
-    """创建测试用财务指标数据（BaoStock dict 格式）。
-
-    注意：get_fundamental_data 中 pe_ttm 存储 ROE，pb 存储 EPS。
-    """
+    """创建测试用财务指标数据（BaoStock dict 格式）。"""
     return {
-        "roeAvg": 0.18,       # ROE 18%  → pe_ttm = 18.0
-        "epsTTM": 2.5,        # EPS 2.5  → pb = 2.5
+        "roeAvg": 0.18,       # ROE 18%
+        "epsTTM": 2.5,        # EPS 2.5
+        "gross_margin": 0.45, # 毛利率 45%
         "profit_growth": 25.0,
         "revenue_growth": 20.0,
+        "debt_ratio": 55.0,   # 资产负债率 55%
+        "cash_flow": 1.2,     # 每股经营现金流 1.2
     }
 
 
@@ -34,10 +34,10 @@ class TestGetFundamentalData:
         result = get_fundamental_data("600519")
 
         assert isinstance(result, FundamentalData)
-        # ROE 0.18 → pe_ttm = 18.0
-        assert result.pe_ttm == pytest.approx(18.0)
-        # EPS 2.5 → pb = 2.5
-        assert result.pb == pytest.approx(2.5)
+        # ROE 0.18 → 18.0%
+        assert result.roe == pytest.approx(18.0)
+        # EPS 2.5
+        assert result.eps == pytest.approx(2.5)
         assert result.profit_growth == 25.0
         assert result.revenue_growth == 20.0
 
@@ -49,8 +49,8 @@ class TestGetFundamentalData:
         result = get_fundamental_data("600519")
 
         assert isinstance(result, FundamentalData)
-        assert result.pe_ttm == 0.0
-        assert result.pb == 0.0
+        assert result.roe == 0.0
+        assert result.eps == 0.0
         assert result.profit_growth is None
 
     @patch("fundamental_analysis._fetch_financial_indicator")
@@ -61,8 +61,8 @@ class TestGetFundamentalData:
         result = get_fundamental_data("600519")
 
         assert isinstance(result, FundamentalData)
-        assert result.pe_ttm == pytest.approx(15.0)
-        assert result.pb == 0.0
+        assert result.roe == pytest.approx(15.0)
+        assert result.eps == 0.0
         assert result.profit_growth is None
 
     @patch("fundamental_analysis._fetch_financial_indicator")
@@ -73,7 +73,7 @@ class TestGetFundamentalData:
         result = get_fundamental_data("600519")
 
         assert isinstance(result, FundamentalData)
-        assert result.pe_ttm == 0.0
+        assert result.roe == 0.0
         assert result.profit_growth is None
 
     @patch("fundamental_analysis._fetch_financial_indicator")
@@ -91,35 +91,59 @@ class TestGetFundamentalData:
 class TestCalcFundamentalScore:
     """基本面评分测试。
 
-    评分规则（适配 BaoStock 数据）：
-    - ROE（pe_ttm字段）: >15% → +8, 10~15% → +3, <10% → 0
-    - EPS（pb字段）: >0 → +5
+    评分规则：
+    - ROE: >15% → +8, 10~15% → +3, <10% → 0
+    - EPS: >0 → +5
     - 净利润同比: >20% → +10, 0~20% → +5, <0% → 0
     - 营收同比: >15% → +7, 0~15% → +3, <0% → 0
+    新增：
+    - 资产负债率 > 70% → 打 0.8 折
+    - 毛利率 > 30% → +2
+    - 经营现金流 > 0 → +2
     """
 
     def test_full_score(self) -> None:
-        """满分场景：ROE=20, EPS=2.5, 净利润+25%, 营收+20%。"""
+        """满分场景（不含新增调节项）：ROE=20, EPS=2.5, 净利润+25%, 营收+20%。"""
         data = FundamentalData(
-            pe_ttm=20.0,    # ROE 20% → +8
-            pb=2.5,         # EPS > 0 → +5
-            market_cap=100e8,
-            profit_growth=25.0,   # >20% → +10
-            revenue_growth=20.0,  # >15% → +7
+            roe=20.0, eps=2.5, market_cap=100e8,
+            profit_growth=25.0, revenue_growth=20.0,
+            debt_ratio=None, cash_flow=None, gross_margin=None,
         )
         weights = FundamentalWeightConfig()
         score = calc_fundamental_score(data, weights)
         # 8 + 5 + 10 + 7 = 30
         assert score == 30.0
 
+    def test_full_score_with_bonuses(self) -> None:
+        """满分 + 毛利率奖励 + 现金流奖励 = 34。"""
+        data = FundamentalData(
+            roe=20.0, eps=2.5, market_cap=100e8,
+            profit_growth=25.0, revenue_growth=20.0,
+            debt_ratio=50.0, cash_flow=1.5, gross_margin=40.0,
+        )
+        weights = FundamentalWeightConfig()
+        score = calc_fundamental_score(data, weights)
+        # 8 + 5 + 10 + 7 + 2(毛利率) + 2(现金流) = 34
+        assert score == 34.0
+
+    def test_high_debt_penalty(self) -> None:
+        """高负债打折场景。"""
+        data = FundamentalData(
+            roe=20.0, eps=2.5, market_cap=100e8,
+            profit_growth=25.0, revenue_growth=20.0,
+            debt_ratio=75.0, cash_flow=None, gross_margin=None,
+        )
+        weights = FundamentalWeightConfig()
+        score = calc_fundamental_score(data, weights)
+        # 基础分 30，高负债打 0.8 折 → 24
+        assert score == pytest.approx(24.0)
+
     def test_zero_score(self) -> None:
         """零分场景：ROE=5%, EPS=-1, 净利润-10%, 营收-5%。"""
         data = FundamentalData(
-            pe_ttm=5.0,     # ROE 5% → 0
-            pb=-1.0,        # EPS < 0 → 0
-            market_cap=100e8,
-            profit_growth=-10.0,  # 下降 → 0
-            revenue_growth=-5.0,  # 下降 → 0
+            roe=5.0, eps=-1.0, market_cap=100e8,
+            profit_growth=-10.0, revenue_growth=-5.0,
+            debt_ratio=None, cash_flow=None, gross_margin=None,
         )
         weights = FundamentalWeightConfig()
         score = calc_fundamental_score(data, weights)
@@ -128,11 +152,9 @@ class TestCalcFundamentalScore:
     def test_roe_mid_range(self) -> None:
         """ROE 中等场景：ROE=12%, EPS=3, 净利润+25%, 营收+20%。"""
         data = FundamentalData(
-            pe_ttm=12.0,    # ROE 12% → +3
-            pb=3.0,         # EPS > 0 → +5
-            market_cap=100e8,
-            profit_growth=25.0,   # >20% → +10
-            revenue_growth=20.0,  # >15% → +7
+            roe=12.0, eps=3.0, market_cap=100e8,
+            profit_growth=25.0, revenue_growth=20.0,
+            debt_ratio=None, cash_flow=None, gross_margin=None,
         )
         weights = FundamentalWeightConfig()
         score = calc_fundamental_score(data, weights)
@@ -140,13 +162,11 @@ class TestCalcFundamentalScore:
         assert score == 25.0
 
     def test_missing_data(self) -> None:
-        """数据缺失场景：ROE=20, EPS=3, 无增长率数据。"""
+        """数据缺失场景。"""
         data = FundamentalData(
-            pe_ttm=20.0,    # ROE 20% → +8
-            pb=3.0,         # EPS > 0 → +5
-            market_cap=100e8,
-            profit_growth=None,   # 缺失 → 0
-            revenue_growth=None,  # 缺失 → 0
+            roe=20.0, eps=3.0, market_cap=100e8,
+            profit_growth=None, revenue_growth=None,
+            debt_ratio=None, cash_flow=None, gross_margin=None,
         )
         weights = FundamentalWeightConfig()
         score = calc_fundamental_score(data, weights)
@@ -156,11 +176,9 @@ class TestCalcFundamentalScore:
     def test_profit_stable_growth(self) -> None:
         """净利润稳定增长场景。"""
         data = FundamentalData(
-            pe_ttm=20.0,    # ROE 20% → +8
-            pb=3.0,         # EPS > 0 → +5
-            market_cap=100e8,
-            profit_growth=10.0,   # 0~20% → +5
-            revenue_growth=20.0,  # >15% → +7
+            roe=20.0, eps=3.0, market_cap=100e8,
+            profit_growth=10.0, revenue_growth=20.0,
+            debt_ratio=None, cash_flow=None, gross_margin=None,
         )
         weights = FundamentalWeightConfig()
         score = calc_fundamental_score(data, weights)
@@ -170,11 +188,9 @@ class TestCalcFundamentalScore:
     def test_revenue_stable_growth(self) -> None:
         """营收稳定增长场景。"""
         data = FundamentalData(
-            pe_ttm=20.0,    # ROE 20% → +8
-            pb=3.0,         # EPS > 0 → +5
-            market_cap=100e8,
-            profit_growth=25.0,   # >20% → +10
-            revenue_growth=10.0,  # 0~15% → +3
+            roe=20.0, eps=3.0, market_cap=100e8,
+            profit_growth=25.0, revenue_growth=10.0,
+            debt_ratio=None, cash_flow=None, gross_margin=None,
         )
         weights = FundamentalWeightConfig()
         score = calc_fundamental_score(data, weights)
