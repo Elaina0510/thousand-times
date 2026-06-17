@@ -215,6 +215,72 @@ def get_etf_hist_baostock(code: str, days: int = 60) -> pd.DataFrame:
     return get_stock_hist_baostock(code, days)
 
 
+def get_etf_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str, pd.DataFrame]:
+    """批量获取多只ETF的历史行情（共享一个 BaoStock 会话）。
+
+    解决并行获取时多次 login/logout 导致的会话冲突问题。
+
+    Args:
+        codes: ETF代码列表
+        days: 获取天数
+
+    Returns:
+        字典，键为ETF代码，值为对应的 DataFrame
+    """
+    result: dict[str, pd.DataFrame] = {}
+
+    try:
+        with baostock_session() as bs:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y-%m-%d')
+
+            for code in codes:
+                try:
+                    bs_code = _convert_code(code)
+                    rs = bs.query_history_k_data_plus(
+                        bs_code,
+                        "date,open,high,low,close,volume",
+                        start_date=start_date,
+                        end_date=end_date,
+                        frequency="d",
+                        adjustflag="2"
+                    )
+
+                    if rs.error_code != '0':
+                        logger.warning(f"BaoStock 获取 ETF {code} 失败: {rs.error_msg}")
+                        result[code] = pd.DataFrame()
+                        continue
+
+                    data_list = []
+                    while (rs.error_code == '0') & rs.next():
+                        data_list.append(rs.get_row_data())
+
+                    if not data_list:
+                        result[code] = pd.DataFrame()
+                        continue
+
+                    df = pd.DataFrame(data_list, columns=rs.fields)
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+                    df = df.rename(columns={
+                        'date': '日期', 'open': '开盘', 'close': '收盘',
+                        'high': '最高', 'low': '最低', 'volume': '成交量',
+                    })
+
+                    result[code] = df
+                    logger.info(f"BaoStock 获取 ETF {code} 成功，共 {len(df)} 条数据")
+
+                except Exception as e:
+                    logger.warning(f"BaoStock 获取 ETF {code} 失败: {e}")
+                    result[code] = pd.DataFrame()
+
+    except Exception as e:
+        logger.error(f"BaoStock 批量获取 ETF 失败: {e}")
+
+    return result
+
+
 def get_index_hist_baostock(code: str, days: int = 60) -> pd.DataFrame:
     """使用 BaoStock 获取指数历史行情。
 

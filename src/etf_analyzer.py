@@ -47,6 +47,9 @@ def _fetch_etf_hist(code: str) -> pd.DataFrame:
 def _fetch_etf_fund_daily(code: str, timeout: int = 30) -> pd.DataFrame:
     """获取ETF份额数据（带超时保护）。
 
+    AKShare fund_etf_fund_daily_em() 现在无参数，返回全量数据。
+    需要按代码筛选后使用。
+
     Args:
         code: ETF代码。
         timeout: 超时时间（秒），默认30秒。
@@ -58,7 +61,13 @@ def _fetch_etf_fund_daily(code: str, timeout: int = 30) -> pd.DataFrame:
 
     def _fetch_akshare() -> pd.DataFrame:
         import akshare as ak  # type: ignore[import-untyped]
-        return ak.fund_etf_fund_daily_em(symbol=code)
+        # fund_etf_fund_daily_em() 无参数，返回所有ETF数据
+        all_etfs = ak.fund_etf_fund_daily_em()
+        # 按代码筛选
+        if all_etfs.empty:
+            return all_etfs
+        code_col = all_etfs.columns[0]  # 第一列是基金代码
+        return all_etfs[all_etfs[code_col].astype(str) == code]
 
     # 使用超时保护获取AKShare数据
     try:
@@ -79,7 +88,6 @@ def _fetch_etf_fund_daily(code: str, timeout: int = 30) -> pd.DataFrame:
         logger.info(f"使用 BaoStock 获取 ETF {code} 成交量数据作为代理")
         df = get_etf_hist_baostock(code, days=60)
         if not df.empty:
-            # BaoStock 不提供份额数据，但我们可以使用成交量作为代理
             df = df.rename(columns={
                 '日期': 'date',
                 '成交量': 'share_change',
@@ -110,6 +118,8 @@ ETF_NAME_MAP: dict[str, str] = {
 def get_etf_pool(config: AppConfig) -> tuple[list[EtfInfo], dict[str, pd.DataFrame]]:
     """获取ETF池中各ETF的当前行情，同时返回K线数据缓存。
 
+    使用 BaoStock 单会话批量获取，避免并行 login/logout 冲突。
+
     Args:
         config: 应用配置。
 
@@ -119,49 +129,43 @@ def get_etf_pool(config: AppConfig) -> tuple[list[EtfInfo], dict[str, pd.DataFra
     etf_list: list[EtfInfo] = []
     kline_cache: dict[str, pd.DataFrame] = {}
 
+    # 批量获取所有ETF的K线数据（单会话，避免并发冲突）
+    try:
+        from baostock_data import get_etf_hist_batch_baostock
+        logger.info(f"批量获取 {len(config.etf_pool)} 只ETF的K线数据...")
+        kline_cache = get_etf_hist_batch_baostock(config.etf_pool, days=60)
+    except Exception as e:
+        logger.warning(f"批量获取ETF失败，回退到逐只获取: {e}")
+        for code in config.etf_pool:
+            try:
+                kline_cache[code] = _fetch_etf_hist(code)
+            except Exception:
+                kline_cache[code] = pd.DataFrame()
+
+    # 构建 ETF 信息列表
     for code in config.etf_pool:
-        try:
-            df = _fetch_etf_hist(code)
-
-            if df.empty:
-                logger.warning(f"ETF {code} 数据为空")
-                continue
-
-            # 缓存原始 K-line 数据（供后续技术分析使用）
-            kline_cache[code] = df
-
-            # 重命名列（支持 AKShare 和 BaoStock 两种格式）
-            column_mapping = {
-                "名称": "name",
-                "最新价": "close",
-                "涨跌幅": "change_pct",
-                # BaoStock 格式
-                "收盘": "close",
-                "日期": "date",
-            }
-            existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
-            df = df.rename(columns=existing_columns)
-
-            # 获取最新数据
-            latest = df.iloc[-1]
-
-            # 优先使用映射表中的名称
-            name = ETF_NAME_MAP.get(code, str(latest.get("name", f"ETF_{code}")))
-            current_price = float(latest.get("close", 0.0))
-            change_pct = float(latest.get("change_pct", 0.0))
-
-            etf_list.append(
-                EtfInfo(
-                    code=code,
-                    name=name,
-                    current_price=current_price,
-                    change_pct=change_pct,
-                )
-            )
-
-        except Exception as e:
-            logger.warning(f"获取ETF {code} 数据失败: {e}")
+        df = kline_cache.get(code, pd.DataFrame())
+        if df.empty:
+            logger.warning(f"ETF {code} 数据为空")
             continue
+
+        # 重命名列（支持 BaoStock 格式）
+        column_mapping = {
+            "名称": "name", "最新价": "close", "涨跌幅": "change_pct",
+            "收盘": "close", "日期": "date",
+        }
+        existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
+        df_renamed = df.rename(columns=existing_columns)
+
+        latest = df_renamed.iloc[-1]
+        name = ETF_NAME_MAP.get(code, str(latest.get("name", f"ETF_{code}")))
+        current_price = float(latest.get("close", 0.0))
+        change_pct = float(latest.get("change_pct", 0.0))
+
+        etf_list.append(EtfInfo(
+            code=code, name=name,
+            current_price=current_price, change_pct=change_pct,
+        ))
 
     logger.info(f"ETF池获取完成，共 {len(etf_list)} 只ETF")
     return etf_list, kline_cache

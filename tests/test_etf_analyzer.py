@@ -36,10 +36,11 @@ def _make_etf_fund_daily() -> pd.DataFrame:
 class TestGetEtfPool:
     """ETF池获取测试。"""
 
-    @patch("etf_analyzer._fetch_etf_hist")
-    def test_normal_data(self, mock_hist: MagicMock) -> None:
+    @patch("baostock_data.get_etf_hist_batch_baostock")
+    def test_normal_data(self, mock_batch: MagicMock) -> None:
         """正常获取ETF池。"""
-        mock_hist.return_value = _make_etf_hist()
+        hist = _make_etf_hist()
+        mock_batch.return_value = {"512480": hist, "516160": hist}
 
         config = AppConfig(etf_pool=["512480", "516160"])
         etf_list, kline_cache = get_etf_pool(config)
@@ -48,32 +49,30 @@ class TestGetEtfPool:
         assert all(isinstance(etf, EtfInfo) for etf in etf_list)
         assert etf_list[0].code == "512480"
         assert etf_list[1].code == "516160"
-        # K线缓存也应包含数据
         assert len(kline_cache) == 2
         assert "512480" in kline_cache
         assert "516160" in kline_cache
 
-    @patch("etf_analyzer._fetch_etf_hist")
-    def test_empty_data(self, mock_hist: MagicMock) -> None:
+    @patch("baostock_data.get_etf_hist_batch_baostock")
+    def test_empty_data(self, mock_batch: MagicMock) -> None:
         """空数据时跳过该ETF。"""
-        mock_hist.return_value = pd.DataFrame()
+        mock_batch.return_value = {"512480": pd.DataFrame()}
 
         config = AppConfig(etf_pool=["512480"])
         etf_list, kline_cache = get_etf_pool(config)
 
         assert len(etf_list) == 0
-        assert len(kline_cache) == 0
 
-    @patch("etf_analyzer._fetch_etf_hist")
-    def test_api_failure(self, mock_hist: MagicMock) -> None:
-        """API失败时跳过该ETF。"""
-        mock_hist.side_effect = Exception("API 超时")
-
-        config = AppConfig(etf_pool=["512480"])
-        etf_list, kline_cache = get_etf_pool(config)
+    @patch("baostock_data.get_etf_hist_batch_baostock")
+    def test_api_failure(self, mock_batch: MagicMock) -> None:
+        """API失败时回退到逐只获取。"""
+        mock_batch.side_effect = Exception("API 超时")
+        # 回退的逐只获取也会失败
+        with patch("etf_analyzer._fetch_etf_hist", side_effect=Exception("fail")):
+            config = AppConfig(etf_pool=["512480"])
+            etf_list, kline_cache = get_etf_pool(config)
 
         assert len(etf_list) == 0
-        assert len(kline_cache) == 0
 
 
 class TestCalcFundFlowScore:

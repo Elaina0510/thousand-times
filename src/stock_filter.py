@@ -100,8 +100,16 @@ def _fetch_stock_data_baostock(max_retries: int = 3) -> tuple[pd.DataFrame, pd.D
                     logger.warning("BaoStock 返回空股票列表")
                     return pd.DataFrame(), pd.DataFrame()
 
-                # 转换为 DataFrame
-                stock_df = pd.DataFrame(stock_list, columns=rs.fields)
+                # 转换为 DataFrame（防御性检查：字段数与数据列数必须一致）
+                fields = rs.fields
+                if not fields or len(fields) != len(stock_list[0]):
+                    logger.error(
+                        f"BaoStock 字段数({len(fields)})与数据列数"
+                        f"({len(stock_list[0])})不匹配，跳过"
+                    )
+                    return pd.DataFrame(), pd.DataFrame()
+
+                stock_df = pd.DataFrame(stock_list, columns=fields)
 
                 # 只保留 A 股（sh.6, sz.0, sz.3 开头）
                 a_stock_mask = (
@@ -161,12 +169,15 @@ def _fetch_stock_data_baostock(max_retries: int = 3) -> tuple[pd.DataFrame, pd.D
 
         except Exception as e:
             last_error = e
-            if attempt < max_retries - 1:
+            # 编码错误或网络错误可重试，其他错误直接放弃
+            retryable = isinstance(e, (UnicodeDecodeError, ConnectionError, OSError))
+            if attempt < max_retries - 1 and retryable:
                 wait_time = 2 ** attempt
                 logger.warning(f"BaoStock 获取失败，{wait_time}秒后重试 ({attempt + 1}/{max_retries}): {e}")
                 time.sleep(wait_time)
             else:
-                logger.error(f"BaoStock 获取全市场数据失败，已重试 {max_retries} 次: {e}")
+                logger.error(f"BaoStock 获取全市场数据失败: {e}")
+                break
 
     raise last_error  # type: ignore[misc]
 
