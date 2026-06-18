@@ -169,8 +169,8 @@ def _fetch_stock_data_baostock(max_retries: int = 3) -> tuple[pd.DataFrame, pd.D
 
         except Exception as e:
             last_error = e
-            # 编码错误或网络错误可重试，其他错误直接放弃
-            retryable = isinstance(e, (UnicodeDecodeError, ConnectionError, OSError))
+            # 编码错误、网络错误、BaoStock内部错误可重试
+            retryable = isinstance(e, (UnicodeDecodeError, ConnectionError, OSError, RuntimeError))
             if attempt < max_retries - 1 and retryable:
                 wait_time = 2 ** attempt
                 logger.warning(f"BaoStock 获取失败，{wait_time}秒后重试 ({attempt + 1}/{max_retries}): {e}")

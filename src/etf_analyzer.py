@@ -244,14 +244,22 @@ def get_etf_fund_flow(code: str, days: int = 5) -> float:
         column_mapping = {
             "份额变化": "share_change",
             "日份额变化": "share_change",
+            "涨跌额": "share_change",  # AKShare 新格式
+            "日增长": "share_change",
         }
         existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
         df = df.rename(columns=existing_columns)
 
         # 获取份额变化列
         if "share_change" not in df.columns:
-            logger.warning(f"ETF {code} 份额数据缺少份额变化列")
-            return 3.0
+            # 尝试用数值列的最后一列作为份额变化代理
+            numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+            if numeric_cols:
+                logger.info(f"ETF {code} 未找到份额变化列，使用数值列 '{numeric_cols[-1]}' 作为代理")
+                df["share_change"] = df[numeric_cols[-1]]
+            else:
+                logger.warning(f"ETF {code} 份额数据无可用数值列，使用默认持平评分")
+                return 3.0
 
         # 取最近 days 天的数据
         share_changes = df["share_change"].tail(days).astype(float).tolist()
