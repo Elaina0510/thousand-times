@@ -125,8 +125,51 @@ def get_stock_hist_baostock(code: str, days: int = 60) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _is_connection_error(e: Exception) -> bool:
+    """判断异常是否为连接错误（需要重连）。"""
+    err_str = str(e).lower()
+    keywords = [
+        "bad file descriptor", "网络接收错误", "用户未登录",
+        "connection reset", "broken pipe", "remote disconnect",
+    ]
+    return any(kw in err_str for kw in keywords)
+
+
+def _fetch_single_stock(bs: object, code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """在已有会话中获取单只股票数据。"""
+    bs_code = _convert_code(code)
+    rs = bs.query_history_k_data_plus(
+        bs_code,
+        "date,open,high,low,close,volume",
+        start_date=start_date,
+        end_date=end_date,
+        frequency="d",
+        adjustflag="2"
+    )
+
+    if rs.error_code != '0':
+        raise RuntimeError(f"BaoStock 获取 {code} 失败: {rs.error_msg}")
+
+    data_list = []
+    while (rs.error_code == '0') & rs.next():
+        data_list.append(rs.get_row_data())
+
+    if not data_list:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data_list, columns=rs.fields)
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    df = df.rename(columns={
+        'date': '日期', 'open': '开盘', 'close': '收盘',
+        'high': '最高', 'low': '最低', 'volume': '成交量',
+    })
+    return df
+
+
 def get_stock_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str, pd.DataFrame]:
-    """批量获取多只股票的历史行情（共享一个 BaoStock 会话）。
+    """批量获取多只股票的历史行情（共享会话，断线自动重连）。
 
     Args:
         codes: 股票代码列表
@@ -135,69 +178,66 @@ def get_stock_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str,
     Returns:
         字典，键为股票代码，值为对应的 DataFrame
     """
-    result = {}
+    result: dict[str, pd.DataFrame] = {}
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y-%m-%d')
 
-    try:
-        with baostock_session() as bs:
-            # 计算日期范围
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y-%m-%d')
+    import baostock as bs
 
-            for code in codes:
-                try:
-                    # 转换代码格式
-                    bs_code = _convert_code(code)
+    def _login() -> bool:
+        lg = bs.login()
+        if lg.error_code != '0':
+            logger.error(f"BaoStock 登录失败: {lg.error_msg}")
+            return False
+        return True
 
-                    # 获取日线数据
-                    rs = bs.query_history_k_data_plus(
-                        bs_code,
-                        "date,open,high,low,close,volume",
-                        start_date=start_date,
-                        end_date=end_date,
-                        frequency="d",
-                        adjustflag="2"  # 前复权
-                    )
+    def _logout() -> None:
+        try:
+            bs.logout()
+        except Exception:
+            pass
 
-                    if rs.error_code != '0':
-                        logger.warning(f"BaoStock 获取 {code} 失败: {rs.error_msg}")
-                        result[code] = pd.DataFrame()
+    if not _login():
+        return {code: pd.DataFrame() for code in codes}
+
+    consecutive_errors = 0
+    max_consecutive = 5  # 连续5次连接错误则重新登录
+
+    for code in codes:
+        try:
+            df = _fetch_single_stock(bs, code, start_date, end_date)
+            result[code] = df if not df.empty else pd.DataFrame()
+            consecutive_errors = 0  # 成功则重置计数
+
+        except Exception as e:
+            consecutive_errors += 1
+            is_conn_err = _is_connection_error(e)
+
+            if is_conn_err and consecutive_errors >= max_consecutive:
+                # 连续多次连接错误，尝试重新登录
+                logger.warning(f"连续 {consecutive_errors} 次连接错误，尝试重新登录...")
+                _logout()
+                import time
+                time.sleep(1)
+                if _login():
+                    logger.info("重新登录成功，继续获取")
+                    consecutive_errors = 0
+                    # 重试当前股票
+                    try:
+                        df = _fetch_single_stock(bs, code, start_date, end_date)
+                        result[code] = df if not df.empty else pd.DataFrame()
+                        consecutive_errors = 0
                         continue
+                    except Exception as e2:
+                        logger.warning(f"重试 {code} 仍失败: {e2}")
 
-                    # 解析数据
-                    data_list = []
-                    while (rs.error_code == '0') & rs.next():
-                        data_list.append(rs.get_row_data())
+            logger.warning(f"BaoStock 获取 {code} 失败: {e}")
+            result[code] = pd.DataFrame()
 
-                    if not data_list:
-                        logger.warning(f"BaoStock 返回空数据: {code}")
-                        result[code] = pd.DataFrame()
-                        continue
+    _logout()
 
-                    df = pd.DataFrame(data_list, columns=rs.fields)
-
-                    # 转换数据类型
-                    for col in ['open', 'high', 'low', 'close', 'volume']:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-                    # 重命名列以匹配 AKShare 格式
-                    df = df.rename(columns={
-                        'date': '日期',
-                        'open': '开盘',
-                        'close': '收盘',
-                        'high': '最高',
-                        'low': '最低',
-                        'volume': '成交量',
-                    })
-
-                    result[code] = df
-
-                except Exception as e:
-                    logger.warning(f"BaoStock 获取 {code} 失败: {e}")
-                    result[code] = pd.DataFrame()
-
-    except Exception as e:
-        logger.error(f"BaoStock 批量获取失败: {e}")
-
+    success = sum(1 for v in result.values() if not v.empty)
+    logger.info(f"BaoStock 批量获取完成: {success}/{len(codes)} 只成功")
     return result
 
 
@@ -216,9 +256,7 @@ def get_etf_hist_baostock(code: str, days: int = 60) -> pd.DataFrame:
 
 
 def get_etf_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str, pd.DataFrame]:
-    """批量获取多只ETF的历史行情（共享一个 BaoStock 会话）。
-
-    解决并行获取时多次 login/logout 导致的会话冲突问题。
+    """批量获取多只ETF的历史行情（共享会话，断线自动重连）。
 
     Args:
         codes: ETF代码列表
@@ -228,56 +266,57 @@ def get_etf_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str, p
         字典，键为ETF代码，值为对应的 DataFrame
     """
     result: dict[str, pd.DataFrame] = {}
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y-%m-%d')
 
-    try:
-        with baostock_session() as bs:
-            end_date = datetime.now().strftime('%Y-%m-%d')
-            start_date = (datetime.now() - timedelta(days=days * 2)).strftime('%Y-%m-%d')
+    import baostock as bs
 
-            for code in codes:
-                try:
-                    bs_code = _convert_code(code)
-                    rs = bs.query_history_k_data_plus(
-                        bs_code,
-                        "date,open,high,low,close,volume",
-                        start_date=start_date,
-                        end_date=end_date,
-                        frequency="d",
-                        adjustflag="2"
-                    )
+    def _login() -> bool:
+        lg = bs.login()
+        if lg.error_code != '0':
+            logger.error(f"BaoStock 登录失败: {lg.error_msg}")
+            return False
+        return True
 
-                    if rs.error_code != '0':
-                        logger.warning(f"BaoStock 获取 ETF {code} 失败: {rs.error_msg}")
-                        result[code] = pd.DataFrame()
+    def _logout() -> None:
+        try:
+            bs.logout()
+        except Exception:
+            pass
+
+    if not _login():
+        return {code: pd.DataFrame() for code in codes}
+
+    for code in codes:
+        try:
+            df = _fetch_single_stock(bs, code, start_date, end_date)
+            if df.empty:
+                logger.warning(f"BaoStock 返回空数据: ETF {code}")
+                result[code] = pd.DataFrame()
+            else:
+                result[code] = df
+                logger.info(f"BaoStock 获取 ETF {code} 成功，共 {len(df)} 条数据")
+        except Exception as e:
+            if _is_connection_error(e):
+                logger.warning(f"BaoStock ETF {code} 连接错误，尝试重连: {e}")
+                _logout()
+                import time
+                time.sleep(1)
+                if _login():
+                    try:
+                        df = _fetch_single_stock(bs, code, start_date, end_date)
+                        result[code] = df if not df.empty else pd.DataFrame()
                         continue
+                    except Exception as e2:
+                        logger.warning(f"重试 ETF {code} 仍失败: {e2}")
+            else:
+                logger.warning(f"BaoStock 获取 ETF {code} 失败: {e}")
+            result[code] = pd.DataFrame()
 
-                    data_list = []
-                    while (rs.error_code == '0') & rs.next():
-                        data_list.append(rs.get_row_data())
+    _logout()
 
-                    if not data_list:
-                        result[code] = pd.DataFrame()
-                        continue
-
-                    df = pd.DataFrame(data_list, columns=rs.fields)
-                    for col in ['open', 'high', 'low', 'close', 'volume']:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-                    df = df.rename(columns={
-                        'date': '日期', 'open': '开盘', 'close': '收盘',
-                        'high': '最高', 'low': '最低', 'volume': '成交量',
-                    })
-
-                    result[code] = df
-                    logger.info(f"BaoStock 获取 ETF {code} 成功，共 {len(df)} 条数据")
-
-                except Exception as e:
-                    logger.warning(f"BaoStock 获取 ETF {code} 失败: {e}")
-                    result[code] = pd.DataFrame()
-
-    except Exception as e:
-        logger.error(f"BaoStock 批量获取 ETF 失败: {e}")
-
+    success = sum(1 for v in result.values() if not v.empty)
+    logger.info(f"BaoStock ETF批量获取完成: {success}/{len(codes)} 只成功")
     return result
 
 
