@@ -42,11 +42,8 @@ def _fetch_single_with_session(
 ) -> dict:
     """在已有 BaoStock 会话中获取单只股票的财务指标。
 
-    获取三类数据：
-    1. 盈利能力（profitability）：ROE、EPS
-    2. 成长能力（growth）：净利润同比、营收同比
-    3. 偿债能力（balance）：资产负债率
-    4. 现金流（cashflow）：每股经营现金流
+    只尝试当前季度，4 次 API 调用（盈利/成长/偿债/现金流）。
+    首次调用失败则早期退出（避免在连接断开时继续无效请求）。
 
     Args:
         bs: 已登录的 baostock 模块。
@@ -58,117 +55,64 @@ def _fetch_single_with_session(
         包含财务指标的字典，失败返回空字典。
     """
     try:
-        # 转换代码格式
         if code.startswith('6') or code.startswith('5'):
             bs_code = f'sh.{code}'
         else:
             bs_code = f'sz.{code}'
 
         result: dict = {}
+        year, quarter = current_year, current_quarter
 
-        # 尝试最近 2 个季度
-        quarters_to_try = [(current_year, current_quarter)]
-        if current_quarter == 1:
-            quarters_to_try.append((current_year - 1, 4))
+        # ── 盈利能力（核心指标，失败则放弃该股票）──
+        rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
+        if rs_profit.error_code == '0':
+            profit_list = []
+            while (rs_profit.error_code == '0') & rs_profit.next():
+                profit_list.append(rs_profit.get_row_data())
+
+            if profit_list:
+                latest = profit_list[-1]
+                fields = rs_profit.fields
+
+                if 'epsTTM' in fields:
+                    eps_idx = fields.index('epsTTM')
+                    result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
+
+                if 'roeAvg' in fields:
+                    roe_idx = fields.index('roeAvg')
+                    result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
+
+                if 'grossProfitMargin' in fields:
+                    gpm_idx = fields.index('grossProfitMargin')
+                    val = latest[gpm_idx]
+                    if val:
+                        result['gross_margin'] = float(val) * 100
         else:
-            quarters_to_try.append((current_year, current_quarter - 1))
+            # 盈利数据获取失败，可能是连接问题，早期退出
+            return {}
 
-        for year, quarter in quarters_to_try:
-            # ── 盈利能力 ──
-            rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
-            if rs_profit.error_code == '0':
-                profit_list = []
-                while (rs_profit.error_code == '0') & rs_profit.next():
-                    profit_list.append(rs_profit.get_row_data())
+        # ── 成长能力 ──
+        rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
+        if rs_growth.error_code == '0':
+            growth_list = []
+            while (rs_growth.error_code == '0') & rs_growth.next():
+                growth_list.append(rs_growth.get_row_data())
 
-                if profit_list:
-                    latest = profit_list[-1]
-                    fields = rs_profit.fields
+            if growth_list:
+                latest = growth_list[-1]
+                fields = rs_growth.fields
 
-                    if 'epsTTM' in fields:
-                        eps_idx = fields.index('epsTTM')
-                        result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
+                if 'YOYNI' in fields:
+                    yoy_ni_idx = fields.index('YOYNI')
+                    val = latest[yoy_ni_idx]
+                    if val:
+                        result['profit_growth'] = float(val) * 100
 
-                    if 'roeAvg' in fields:
-                        roe_idx = fields.index('roeAvg')
-                        result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
-
-                    # 毛利率
-                    if 'grossProfitMargin' in fields:
-                        gpm_idx = fields.index('grossProfitMargin')
-                        val = latest[gpm_idx]
-                        if val:
-                            result['gross_margin'] = float(val) * 100  # 转为百分比
-
-                    logger.debug(f"BaoStock 获取 {code} 盈利数据成功（{year}Q{quarter}）")
-
-            # ── 成长能力 ──
-            rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
-            if rs_growth.error_code == '0':
-                growth_list = []
-                while (rs_growth.error_code == '0') & rs_growth.next():
-                    growth_list.append(rs_growth.get_row_data())
-
-                if growth_list:
-                    latest = growth_list[-1]
-                    fields = rs_growth.fields
-
-                    if 'YOYNI' in fields:
-                        yoy_ni_idx = fields.index('YOYNI')
-                        val = latest[yoy_ni_idx]
-                        if val:
-                            result['profit_growth'] = float(val) * 100
-
-                    if 'YOYPNI' in fields:
-                        yoy_pni_idx = fields.index('YOYPNI')
-                        val = latest[yoy_pni_idx]
-                        if val:
-                            result['revenue_growth'] = float(val) * 100
-
-                    logger.debug(f"BaoStock 获取 {code} 成长数据成功（{year}Q{quarter}）")
-
-            # ── 偿债能力 ──
-            rs_balance = bs.query_balance_data(code=bs_code, year=year, quarter=quarter)
-            if rs_balance.error_code == '0':
-                balance_list = []
-                while (rs_balance.error_code == '0') & rs_balance.next():
-                    balance_list.append(rs_balance.get_row_data())
-
-                if balance_list:
-                    latest = balance_list[-1]
-                    fields = rs_balance.fields
-
-                    # 资产负债率 = 总负债 / 总资产
-                    if 'liabilityToAsset' in fields:
-                        la_idx = fields.index('liabilityToAsset')
-                        val = latest[la_idx]
-                        if val:
-                            result['debt_ratio'] = float(val) * 100  # 转为百分比
-
-                    logger.debug(f"BaoStock 获取 {code} 偿债数据成功（{year}Q{quarter}）")
-
-            # ── 现金流 ──
-            rs_cashflow = bs.query_cash_flow_data(code=bs_code, year=year, quarter=quarter)
-            if rs_cashflow.error_code == '0':
-                cashflow_list = []
-                while (rs_cashflow.error_code == '0') & rs_cashflow.next():
-                    cashflow_list.append(rs_cashflow.get_row_data())
-
-                if cashflow_list:
-                    latest = cashflow_list[-1]
-                    fields = rs_cashflow.fields
-
-                    # 每股经营现金流
-                    if 'CAToAsset' in fields:
-                        cta_idx = fields.index('CAToAsset')
-                        val = latest[cta_idx]
-                        if val:
-                            result['cash_flow'] = float(val)
-
-                    logger.debug(f"BaoStock 获取 {code} 现金流数据成功（{year}Q{quarter}）")
-
-            if result:
-                return result
+                if 'YOYPNI' in fields:
+                    yoy_pni_idx = fields.index('YOYPNI')
+                    val = latest[yoy_pni_idx]
+                    if val:
+                        result['revenue_growth'] = float(val) * 100
 
         return result
 
@@ -238,7 +182,10 @@ def _empty_fundamental_data() -> FundamentalData:
 
 
 def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
-    """批量获取多只股票的基本面数据（共享单个 BaoStock 会话）。
+    """批量获取多只股票的基本面数据（单会话顺序获取，断线自动重连）。
+
+    优化：每只股票最多 2 次 API 调用（盈利+成长），失败早期退出。
+    连续连接错误时自动重新登录。
 
     Args:
         codes: 股票代码列表。
@@ -249,39 +196,66 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
     if not codes:
         return {}
 
-    try:
-        import baostock as bs
-        from datetime import datetime
+    import baostock as bs
+    from datetime import datetime
 
+    def _login() -> bool:
         lg = bs.login()
         if lg.error_code != '0':
-            logger.warning(f"BaoStock 登录失败: {lg.error_msg}")
-            return {code: _empty_fundamental_data() for code in codes}
+            logger.error(f"BaoStock 登录失败: {lg.error_msg}")
+            return False
+        return True
 
+    def _logout() -> None:
         try:
-            current_year = datetime.now().year
-            current_quarter = (datetime.now().month - 1) // 3 + 1
-            results: dict[str, FundamentalData] = {}
-
-            for code in codes:
-                try:
-                    data = _fetch_single_with_session(bs, code, current_year, current_quarter)
-                    if not data:
-                        results[code] = _empty_fundamental_data()
-                    else:
-                        results[code] = _dict_to_fundamental_data(data)
-                except Exception as e:
-                    logger.warning(f"获取 {code} 基本面数据失败: {e}")
-                    results[code] = _empty_fundamental_data()
-
-            return results
-
-        finally:
             bs.logout()
+        except Exception:
+            pass
 
-    except Exception as e:
-        logger.warning(f"BaoStock 批量获取基本面数据失败: {e}")
+    if not _login():
         return {code: _empty_fundamental_data() for code in codes}
+
+    current_year = datetime.now().year
+    current_quarter = (datetime.now().month - 1) // 3 + 1
+    results: dict[str, FundamentalData] = {}
+
+    consecutive_errors = 0
+    max_consecutive = 5
+
+    for code in codes:
+        try:
+            data = _fetch_single_with_session(bs, code, current_year, current_quarter)
+            if data:
+                results[code] = _dict_to_fundamental_data(data)
+                consecutive_errors = 0
+            else:
+                results[code] = _empty_fundamental_data()
+                consecutive_errors += 1
+        except Exception as e:
+            consecutive_errors += 1
+            logger.warning(f"获取 {code} 基本面数据失败: {e}")
+            results[code] = _empty_fundamental_data()
+
+        # 连续失败则重连
+        if consecutive_errors >= max_consecutive:
+            logger.warning(f"基本面连续 {consecutive_errors} 次失败，尝试重连...")
+            _logout()
+            import time
+            time.sleep(1)
+            if _login():
+                logger.info("基本面重连成功")
+                consecutive_errors = 0
+            else:
+                logger.error("基本面重连失败，跳过剩余股票")
+                for remaining in codes[len(results):]:
+                    results[remaining] = _empty_fundamental_data()
+                break
+
+    _logout()
+
+    success = sum(1 for v in results.values() if v.roe > 0 or v.eps > 0)
+    logger.info(f"基本面数据获取完成: {success}/{len(codes)} 只有效")
+    return results
 
 
 def get_fundamental_data(code: str) -> FundamentalData:

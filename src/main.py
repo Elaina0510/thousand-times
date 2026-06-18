@@ -461,10 +461,8 @@ def main() -> None:
                 else:
                     fund_cache[code] = d
         else:
-            logger.info(f"开始并行获取 {len(stock_codes)} 只股票的基本面数据...")
-            fund_cache = parallel_batch_fetch(
-                stock_codes, get_fundamental_data_batch, workers=4,
-            )
+            logger.info(f"开始获取 {len(stock_codes)} 只股票的基本面数据（单会话顺序获取）...")
+            fund_cache = get_fundamental_data_batch(stock_codes)
             # 序列化 FundamentalData 为 dict 以便 JSON 存储
             fund_cacheSerializable = {
                 k: {
