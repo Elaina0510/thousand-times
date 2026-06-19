@@ -221,6 +221,8 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
 
     consecutive_errors = 0
     max_consecutive = 5
+    total_reconnects = 0
+    max_reconnects = 3  # 最多重连3次，超过则放弃
 
     for code in codes:
         try:
@@ -238,7 +240,14 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
 
         # 连续失败则重连
         if consecutive_errors >= max_consecutive:
-            logger.warning(f"基本面连续 {consecutive_errors} 次失败，尝试重连...")
+            total_reconnects += 1
+            if total_reconnects > max_reconnects:
+                logger.error(f"基本面已重连 {total_reconnects - 1} 次仍不稳定，放弃剩余股票")
+                for remaining in codes[len(results):]:
+                    results[remaining] = _empty_fundamental_data()
+                break
+
+            logger.warning(f"基本面连续 {consecutive_errors} 次失败，尝试重连 ({total_reconnects}/{max_reconnects})...")
             _logout()
             import time
             time.sleep(1)

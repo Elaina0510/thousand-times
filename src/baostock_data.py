@@ -201,28 +201,35 @@ def get_stock_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str,
         return {code: pd.DataFrame() for code in codes}
 
     consecutive_errors = 0
-    max_consecutive = 5  # 连续5次连接错误则重新登录
+    max_consecutive = 5
+    total_reconnects = 0
+    max_reconnects = 3  # 最多重连3次
 
     for code in codes:
         try:
             df = _fetch_single_stock(bs, code, start_date, end_date)
             result[code] = df if not df.empty else pd.DataFrame()
-            consecutive_errors = 0  # 成功则重置计数
+            consecutive_errors = 0
 
         except Exception as e:
             consecutive_errors += 1
             is_conn_err = _is_connection_error(e)
 
             if is_conn_err and consecutive_errors >= max_consecutive:
-                # 连续多次连接错误，尝试重新登录
-                logger.warning(f"连续 {consecutive_errors} 次连接错误，尝试重新登录...")
+                total_reconnects += 1
+                if total_reconnects > max_reconnects:
+                    logger.error(f"K线获取已重连 {total_reconnects - 1} 次仍不稳定，放弃剩余股票")
+                    for remaining in codes[len(result):]:
+                        result[remaining] = pd.DataFrame()
+                    break
+
+                logger.warning(f"连续 {consecutive_errors} 次连接错误，尝试重连 ({total_reconnects}/{max_reconnects})...")
                 _logout()
                 import time
                 time.sleep(1)
                 if _login():
                     logger.info("重新登录成功，继续获取")
                     consecutive_errors = 0
-                    # 重试当前股票
                     try:
                         df = _fetch_single_stock(bs, code, start_date, end_date)
                         result[code] = df if not df.empty else pd.DataFrame()
@@ -287,6 +294,9 @@ def get_etf_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str, p
     if not _login():
         return {code: pd.DataFrame() for code in codes}
 
+    total_reconnects = 0
+    max_reconnects = 2
+
     for code in codes:
         try:
             df = _fetch_single_stock(bs, code, start_date, end_date)
@@ -298,7 +308,14 @@ def get_etf_hist_batch_baostock(codes: list[str], days: int = 60) -> dict[str, p
                 logger.info(f"BaoStock 获取 ETF {code} 成功，共 {len(df)} 条数据")
         except Exception as e:
             if _is_connection_error(e):
-                logger.warning(f"BaoStock ETF {code} 连接错误，尝试重连: {e}")
+                total_reconnects += 1
+                if total_reconnects > max_reconnects:
+                    logger.error(f"ETF获取已重连 {total_reconnects - 1} 次，放弃剩余")
+                    for remaining in [c for c in codes if c not in result]:
+                        result[remaining] = pd.DataFrame()
+                    break
+
+                logger.warning(f"BaoStock ETF {code} 连接错误，尝试重连 ({total_reconnects}/{max_reconnects}): {e}")
                 _logout()
                 import time
                 time.sleep(1)
