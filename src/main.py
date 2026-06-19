@@ -393,9 +393,7 @@ def main() -> None:
                     f"K线数据部分命中（今日），已有 {len(cached_codes)} 只，"
                     f"需补充 {len(missing_codes)} 只"
                 )
-                extra = parallel_batch_fetch(
-                    missing_codes, get_stock_hist_batch_baostock, workers=4, days=config.lookback_days,
-                )
+                extra = get_stock_hist_batch_baostock(missing_codes, days=config.lookback_days)
                 kline_cache.update(extra)
                 save_kline_cache_with_meta(kline_cache_key, kline_cache, stock_codes)
         elif kline_cache is not None:
@@ -415,9 +413,7 @@ def main() -> None:
                         f"增量更新K线：复用 {len(prev_cache) - len(codes_to_update)} 只，"
                         f"需获取 {len(codes_to_update)} 只"
                     )
-                    new_data = parallel_batch_fetch(
-                        codes_to_update, get_stock_hist_batch_baostock, workers=4, days=config.lookback_days,
-                    )
+                    new_data = get_stock_hist_batch_baostock(codes_to_update, days=config.lookback_days)
                     kline_cache = {**prev_cache, **new_data}
                 else:
                     logger.info(f"前序K线缓存完全可用，共 {len(prev_cache)} 只，无需更新")
@@ -425,10 +421,8 @@ def main() -> None:
                 save_kline_cache_with_meta(kline_cache_key, kline_cache, stock_codes)
             else:
                 # 无任何缓存，全量拉取
-                logger.info(f"开始并行获取 {len(stock_codes)} 只股票的K线数据...")
-                kline_cache = parallel_batch_fetch(
-                    stock_codes, get_stock_hist_batch_baostock, workers=4, days=config.lookback_days,
-                )
+                logger.info(f"开始获取 {len(stock_codes)} 只股票的K线数据（单会话）...")
+                kline_cache = get_stock_hist_batch_baostock(stock_codes, days=config.lookback_days)
                 save_kline_cache_with_meta(kline_cache_key, kline_cache, stock_codes)
                 logger.info(f"K线数据获取完成，成功 {sum(1 for v in kline_cache.values() if not v.empty)} 只")
 
