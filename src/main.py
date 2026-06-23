@@ -17,6 +17,15 @@ import pandas as pd
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# BaoStock 可用性检测（降级到 ashare）
+try:
+    import baostock as _bs_test  # noqa: F401  # type: ignore[import-untyped]
+    BAOSTOCK_AVAILABLE = True
+except ImportError:
+    BAOSTOCK_AVAILABLE = False
+    logger_bootstrap = logging.getLogger("thousand-times")
+    logger_bootstrap.warning("BaoStock 不可用，将降级到 Ashare/AKShare 数据源")
+
 from buy_sell_signal import BuySellSignal, generate_buy_sell_signal
 from cache_manager import (
     FUND_CACHE_TTL,
@@ -373,7 +382,22 @@ def main() -> None:
         clear_expired_cache()
 
         stock_codes = [str(stock["code"]) for _, stock in stock_pool.iterrows()]
-        from baostock_data import get_stock_hist_batch_baostock
+
+        # K线数据获取函数（根据 BaoStock 可用性选择数据源）
+        if BAOSTOCK_AVAILABLE:
+            from baostock_data import get_stock_hist_batch_baostock as _fetch_kline_batch
+        else:
+            from technical_analysis import _fetch_stock_hist_ashare
+
+            def _fetch_kline_batch(codes: list[str], days: int = 60) -> dict[str, pd.DataFrame]:
+                """降级方案：逐只获取 K 线数据。"""
+                result: dict[str, pd.DataFrame] = {}
+                for code in codes:
+                    try:
+                        result[code] = _fetch_stock_hist_ashare(code, days)
+                    except Exception:
+                        result[code] = pd.DataFrame()
+                return result
 
         # K线数据：增量缓存策略
         # 1. 先查今天的缓存（完整命中）
@@ -393,7 +417,7 @@ def main() -> None:
                     f"K线数据部分命中（今日），已有 {len(cached_codes)} 只，"
                     f"需补充 {len(missing_codes)} 只"
                 )
-                extra = get_stock_hist_batch_baostock(missing_codes, days=config.lookback_days)
+                extra = _fetch_kline_batch(missing_codes, days=config.lookback_days)
                 kline_cache.update(extra)
                 save_kline_cache_with_meta(kline_cache_key, kline_cache, stock_codes)
         elif kline_cache is not None:
@@ -413,7 +437,7 @@ def main() -> None:
                         f"增量更新K线：复用 {len(prev_cache) - len(codes_to_update)} 只，"
                         f"需获取 {len(codes_to_update)} 只"
                     )
-                    new_data = get_stock_hist_batch_baostock(codes_to_update, days=config.lookback_days)
+                    new_data = _fetch_kline_batch(codes_to_update, days=config.lookback_days)
                     kline_cache = {**prev_cache, **new_data}
                 else:
                     logger.info(f"前序K线缓存完全可用，共 {len(prev_cache)} 只，无需更新")
@@ -422,7 +446,7 @@ def main() -> None:
             else:
                 # 无任何缓存，全量拉取
                 logger.info(f"开始获取 {len(stock_codes)} 只股票的K线数据（单会话）...")
-                kline_cache = get_stock_hist_batch_baostock(stock_codes, days=config.lookback_days)
+                kline_cache = _fetch_kline_batch(stock_codes, days=config.lookback_days)
                 save_kline_cache_with_meta(kline_cache_key, kline_cache, stock_codes)
                 logger.info(f"K线数据获取完成，成功 {sum(1 for v in kline_cache.values() if not v.empty)} 只")
 

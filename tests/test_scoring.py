@@ -419,3 +419,72 @@ class TestGetIndustryTrendScore:
         config = AppConfig()
         score = get_industry_trend_score("未知行业", config.etf_pool, config)
         assert score == config.industry_trend_weight.sideways
+
+
+class TestEdgeCases:
+    """边界情况测试。"""
+
+    def test_judgment_exact_boundary_75(self) -> None:
+        """评分恰好 75 分 → strong_buy。"""
+        assert judge_score(75.0) == "strong_buy"
+        assert judge_score(74.99) == "buy"
+
+    def test_judgment_exact_boundary_60(self) -> None:
+        """评分恰好 60 分 → buy。"""
+        assert judge_score(60.0) == "buy"
+        assert judge_score(59.99) == "hold"
+
+    def test_judgment_exact_boundary_45(self) -> None:
+        """评分恰好 45 分 → hold。"""
+        assert judge_score(45.0) == "hold"
+        assert judge_score(44.99) == "avoid"
+
+    def test_probability_monotonicity(self) -> None:
+        """概率函数单调递增。"""
+        probs = [score_to_probability(s) for s in range(0, 101, 10)]
+        for i in range(len(probs) - 1):
+            assert probs[i] <= probs[i + 1], f"概率非单调: score={i*10}→{probs[i]}, score={i*10+10}→{probs[i+1]}"
+
+    def test_total_score_negative_news_clamped(self) -> None:
+        """负新闻评分被 max(0, news) 截断。"""
+        config = ScoreWeightConfig()
+        # news=-5 应被截断为 0
+        result_neg = calc_total_score(30, 15, -5, 5, None, False, config)
+        result_zero = calc_total_score(30, 15, 0, 5, None, False, config)
+        assert result_neg == result_zero
+
+    def test_total_score_news_boundary_zero(self) -> None:
+        """news=0 时量价维度为 0。"""
+        config = ScoreWeightConfig()
+        result = calc_total_score(30, 15, 0, 5, None, False, config)
+        # vp_norm = 0, 其他维度正常
+        tech_norm = (30 / 55) * 100
+        trend_norm = (5 / 10) * 100
+        fund_norm = (15 / 30) * 100
+        expected = tech_norm * 0.35 + trend_norm * 0.25 + 0 * 0.20 + fund_norm * 0.20
+        assert result == pytest.approx(round(expected, 2), abs=0.01)
+
+    def test_total_score_fund_flow_none(self) -> None:
+        """fund_flow=None 时资金流向维度为 0。"""
+        config = ScoreWeightConfig()
+        result_with = calc_total_score(30, None, 10, None, 8, True, config)
+        result_without = calc_total_score(30, None, 10, None, None, True, config)
+        assert result_with > result_without
+
+    def test_etf_negative_news_zero(self) -> None:
+        """ETF 负新闻评分为 0（不减分）。"""
+        config = ScoreWeightConfig()
+        result = calc_total_score(30, None, -10, None, 5, True, config)
+        # news 被 max(0, -10) = 0 截断
+        result_zero = calc_total_score(30, None, 0, None, 5, True, config)
+        assert result == result_zero
+
+    def test_score_to_probability_boundary_0(self) -> None:
+        """score=0 的概率接近 0。"""
+        prob = score_to_probability(0.0)
+        assert prob < 5
+
+    def test_score_to_probability_boundary_100(self) -> None:
+        """score=100 的概率接近 100。"""
+        prob = score_to_probability(100.0)
+        assert prob > 95

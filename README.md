@@ -69,7 +69,9 @@ thousand-times/
 │   ├── ashare_data.py          # Ashare 封装模块
 │   ├── remote_data.py          # 远程API数据源（可选）
 │   └── utils.py                # 通用工具（重试/延迟/超时）
-├── tests/                      # 单元测试（216个，与 src 一一对应）
+├── tests/                      # 单元测试（226个，与 src 一一对应）
+│   ├── mocks.py                # 测试 Mock 基础设施（无网络运行核心流程）
+│   └── scenario_14stocks.py    # 14种典型股票场景测试
 ├── doc/                        # 文档（需求/设计/用户指南/开发者文档）
 ├── cache/                      # 数据缓存（gitignore，24小时过期）
 ├── charts/                     # 图表输出（gitignore）
@@ -516,6 +518,13 @@ AKShare（东方财富）→ 国内服务器可用
 - `refactor`: 重构
 
 ## 更新日志
+
+### 2026-06-23
+- ✅ **BaoStock 降级**：main.py 检测 BaoStock 可用性，不可用时自动降级到 Ashare 数据源
+- ✅ **测试基础设施**：新增 tests/mocks.py，提供完整 Mock 工厂函数，支持无网络运行核心流程
+- ✅ **场景测试**：新增 tests/scenario_14stocks.py，覆盖 14 种典型股票场景（30 个测试用例）
+- ✅ **边界测试**：补充评分边界条件测试（精确阈值、概率单调性、负新闻截断等）
+- ✅ **测试覆盖**：226 个单元测试全部通过
 
 ### 2026-06-17
 - ✅ **策略改进**：修复基本面数据字段错配（pe_ttm/pb → roe/eps），语义与实际含义对齐

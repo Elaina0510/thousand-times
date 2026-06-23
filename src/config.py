@@ -139,6 +139,87 @@ DEFAULT_ETF_POOL: list[str] = [
 
 
 @dataclass
+class RegimeConfig:
+    """市场环境判断配置。"""
+
+    ma_short: int = 20
+    ma_long: int = 60
+    volume_bull_ratio: float = 1.2
+    volume_bear_ratio: float = 0.8
+    north_flow_threshold: float = 100e8  # 100亿
+    advance_decline_bull: float = 1.5
+    advance_decline_bear: float = 0.7
+    pe_percentile_low: float = 0.4
+    pe_percentile_high: float = 0.7
+
+
+@dataclass
+class FactorWeightConfig:
+    """因子权重配置（按市场环境）。"""
+
+    bull: dict[str, float] = field(default_factory=lambda: {
+        "technical": 0.30,
+        "fundamental": 0.15,
+        "capital": 0.15,
+        "sentiment": 0.10,
+        "momentum": 0.30,
+    })
+    bear: dict[str, float] = field(default_factory=lambda: {
+        "technical": 0.25,
+        "fundamental": 0.30,
+        "capital": 0.15,
+        "sentiment": 0.15,
+        "momentum": 0.15,
+    })
+    sideways: dict[str, float] = field(default_factory=lambda: {
+        "technical": 0.30,
+        "fundamental": 0.20,
+        "capital": 0.15,
+        "sentiment": 0.15,
+        "momentum": 0.20,
+    })
+
+
+@dataclass
+class SignalConfig:
+    """信号生成配置。"""
+
+    min_buy_votes: int = 3
+    min_sell_votes: int = 3
+    factor_buy_threshold: float = 70.0
+    factor_sell_threshold: float = 30.0
+    technical_buy_threshold: float = 75.0
+    technical_sell_threshold: float = 25.0
+    atr_target_multiplier: float = 2.0
+    atr_stop_multiplier: float = 1.5
+    min_risk_reward: float = 2.0
+
+
+@dataclass
+class RealtimeConfig:
+    """实时提醒配置。"""
+
+    check_interval_minutes: int = 30
+    score_jump_threshold: float = 25.0
+    north_flow_alert: float = 100e8
+
+
+@dataclass
+class BacktestConfig:
+    """回测配置。"""
+
+    start_date: str = "2024-01-01"
+    end_date: str = "2025-12-31"
+    pool_size: int = 50
+    hold_days: list[int] = field(default_factory=lambda: [1, 3, 5, 10])
+    buy_threshold: float = 70.0
+    sell_threshold: float = 30.0
+    commission_rate: float = 0.001
+    slippage: float = 0.001
+    initial_capital: float = 100000.0
+
+
+@dataclass
 class AppConfig:
     """应用总配置。"""
 
@@ -156,6 +237,13 @@ class AppConfig:
     lookback_days: int = 60
     llm_api_url: str = ""
     llm_api_key: str = ""
+    # V2 管道配置
+    regime: RegimeConfig = field(default_factory=RegimeConfig)
+    factor_weights: FactorWeightConfig = field(default_factory=FactorWeightConfig)
+    signal: SignalConfig = field(default_factory=SignalConfig)
+    realtime: RealtimeConfig = field(default_factory=RealtimeConfig)
+    backtest: BacktestConfig = field(default_factory=BacktestConfig)
+    use_v2_pipeline: bool = False
 
 
 def load_config() -> AppConfig:
