@@ -225,7 +225,7 @@ def analyze_policy_impact(
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
             },
-            timeout=30,
+            timeout=120,  # LLM API 需要更长超时时间
         )
 
         if response.status_code != 200:

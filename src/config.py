@@ -246,19 +246,95 @@ class AppConfig:
     use_v2_pipeline: bool = False
 
 
-def load_config() -> AppConfig:
-    """加载配置，优先级：环境变量 > 默认值。
+def _apply_yaml_overrides(config: AppConfig, yaml_path: str) -> None:
+    """从 YAML 文件加载配置覆盖.
+
+    Args:
+        config: 要修改的 AppConfig 实例。
+        yaml_path: YAML 配置文件路径。
+    """
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return
+
+    if not os.path.exists(yaml_path):
+        return
+
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+
+        # regime 配置
+        regime = data.get("regime", {})
+        for key, val in regime.items():
+            if hasattr(config.regime, key):
+                setattr(config.regime, key, val)
+
+        # factor_weights 配置
+        fw = data.get("factor_weights", {})
+        for env_name in ("bull", "bear", "sideways"):
+            env_weights = fw.get(env_name, {})
+            if env_weights and hasattr(config.factor_weights, env_name):
+                current = getattr(config.factor_weights, env_name)
+                current.update(env_weights)
+
+        # signal 配置
+        signal = data.get("signal", {})
+        for key, val in signal.items():
+            if hasattr(config.signal, key):
+                setattr(config.signal, key, val)
+
+        # realtime 配置
+        realtime = data.get("realtime", {})
+        for key, val in realtime.items():
+            if hasattr(config.realtime, key):
+                setattr(config.realtime, key, val)
+
+        # backtest 配置
+        backtest = data.get("backtest", {})
+        for key, val in backtest.items():
+            if hasattr(config.backtest, key):
+                setattr(config.backtest, key, val)
+
+        # filter 配置
+        filt = data.get("filter", {})
+        for key, val in filt.items():
+            if hasattr(config.filter, key):
+                setattr(config.filter, key, val)
+
+        # 顶层配置
+        if "use_v2_pipeline" in data:
+            config.use_v2_pipeline = bool(data["use_v2_pipeline"])
+        if "lookback_days" in data:
+            config.lookback_days = int(data["lookback_days"])
+
+    except Exception as e:
+        import logging
+        logging.getLogger("thousand-times").warning(f"加载 YAML 配置失败: {e}")
+
+
+def load_config(yaml_path: str | None = None) -> AppConfig:
+    """加载配置，优先级：YAML 文件 > 环境变量 > 默认值。
+
+    Args:
+        yaml_path: YAML 配置文件路径，默认为 "config.yaml"。
 
     Returns:
         完整的 AppConfig 实例。
     """
     config = AppConfig()
-    # 从环境变量读取敏感信息
-    config.llm_api_url = os.environ.get("LLM_API_URL", "")
-    config.llm_api_key = os.environ.get("LLM_API_KEY", "")
 
-    # CI 环境：使用默认配置（1000只股票）
-    # 如果需要调整，可以通过环境变量覆盖
+    # 1. 从 YAML 文件加载（可选）
+    if yaml_path is None:
+        yaml_path = os.environ.get("CONFIG_YAML", "config.yaml")
+    _apply_yaml_overrides(config, yaml_path)
+
+    # 2. 从环境变量读取敏感信息（环境变量优先级高于 YAML）
+    config.llm_api_url = os.environ.get("LLM_API_URL", config.llm_api_url or "")
+    config.llm_api_key = os.environ.get("LLM_API_KEY", config.llm_api_key or "")
+
+    # CI 环境：使用默认配置
     ci_pool_size = os.environ.get("CI_POOL_SIZE")
     if ci_pool_size:
         config.filter.pool_size = int(ci_pool_size)

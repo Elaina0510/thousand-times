@@ -5,6 +5,9 @@ __pycache__/
 .ruff_cache/
 charts/
 logs/
+cache/
+public/
+screenshot/
 *.egg-info/
 dist/
 build/

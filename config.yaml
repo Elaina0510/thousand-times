@@ -1,0 +1,69 @@
+# A股智能选股系统配置文件
+# 优先级：环境变量 > config.yaml > 默认值
+
+# 是否启用 V2 管道
+use_v2_pipeline: true
+
+# 回溯天数
+lookback_days: 120
+
+# 股票池筛选
+filter:
+  pool_size: 50
+
+# 市场环境判断配置
+regime:
+  ma_short: 20
+  ma_long: 60
+  volume_bull_ratio: 1.2
+  volume_bear_ratio: 0.8
+  north_flow_threshold: 10000000000  # 100亿
+  advance_decline_bull: 1.5
+  advance_decline_bear: 0.7
+
+# 因子权重配置（按市场环境）
+factor_weights:
+  bull:
+    technical: 0.30
+    fundamental: 0.15
+    capital: 0.15
+    sentiment: 0.10
+    momentum: 0.30
+  bear:
+    technical: 0.25
+    fundamental: 0.30
+    capital: 0.15
+    sentiment: 0.15
+    momentum: 0.15
+  sideways:
+    technical: 0.30
+    fundamental: 0.20
+    capital: 0.15
+    sentiment: 0.15
+    momentum: 0.20
+
+# 信号生成配置
+signal:
+  min_buy_votes: 3
+  min_sell_votes: 3
+  factor_buy_threshold: 70.0
+  factor_sell_threshold: 30.0
+  technical_buy_threshold: 75.0
+  technical_sell_threshold: 25.0
+  atr_target_multiplier: 2.0
+  atr_stop_multiplier: 1.5
+  min_risk_reward: 2.0
+
+# 实时监控配置
+realtime:
+  check_interval_minutes: 30
+  score_jump_threshold: 25.0
+  north_flow_alert: 10000000000  # 100亿
+
+# 回测配置
+backtest:
+  pool_size: 50
+  hold_days: [1, 3, 5, 10]
+  commission_rate: 0.001
+  slippage: 0.001
+  initial_capital: 100000.0

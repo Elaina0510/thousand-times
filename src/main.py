@@ -267,6 +267,89 @@ def analyze_single_etf(
     )
 
 
+def _run_v2_pipeline(config: object, is_ci: bool = False) -> None:
+    """V2 管道执行路径.
+
+    5阶段管道：collect → regime → factors → signal → output
+
+    Args:
+        config: AppConfig 配置。
+        is_ci: 是否在 CI 环境中。
+    """
+    from pipeline.collect import stage_collect
+    from pipeline.regime import judge_market_regime
+    from pipeline.factors import calc_factors
+    from pipeline.signal import generate_signals
+    from pipeline.output import stage_output, run_realtime
+
+    # 检查是否实时监控模式
+    if getattr(config, "realtime_mode", False):
+        logger.info("启动 V2 实时监控模式")
+        run_realtime(config)
+        return
+
+    logger.info("=" * 50)
+    logger.info("V2 管道：开始A股每日分析")
+    logger.info("=" * 50)
+
+    # 阶段2: 数据采集
+    try:
+        data = stage_collect(config)
+        logger.info(f"数据采集完成: {len(getattr(data, 'kline_cache', {}))} 只股票")
+    except Exception as e:
+        logger.error(f"数据采集失败: {e}")
+        if is_ci:
+            logger.info("CI 环境中数据采集失败，跳过")
+            return
+        raise
+
+    # 阶段1: 市场环境判断（使用阶段2的数据）
+    try:
+        regime = judge_market_regime(data, config)
+        logger.info(f"市场环境: {regime.description}")
+    except Exception as e:
+        logger.error(f"市场环境判断失败: {e}，使用默认震荡")
+        from pipeline.regime import MarketRegime
+        regime = MarketRegime(state="sideways", confidence=0.5, position_advice=0.5,
+                              description="默认震荡市")
+
+    # 阶段3: 多因子计算
+    try:
+        scores = calc_factors(data, config, regime.state)
+        logger.info(f"因子计算完成: {len(scores)} 只股票")
+    except Exception as e:
+        logger.error(f"因子计算失败: {e}")
+        if is_ci:
+            return
+        raise
+
+    # 阶段4: 信号生成
+    try:
+        signals = generate_signals(scores, data, config, regime.state)
+        buy_count = sum(1 for s in signals if s.action == "buy")
+        sell_count = sum(1 for s in signals if s.action == "sell")
+        logger.info(f"信号生成完成: 买入 {buy_count}, 卖出 {sell_count}")
+    except Exception as e:
+        logger.error(f"信号生成失败: {e}")
+        if is_ci:
+            return
+        raise
+
+    # 阶段5: 输出报告
+    try:
+        report = stage_output(signals, regime, data, config)
+        logger.info("报告生成完成")
+    except Exception as e:
+        logger.error(f"报告生成失败: {e}")
+        if is_ci:
+            return
+        raise
+
+    logger.info("=" * 50)
+    logger.info("V2 管道：A股每日分析完成")
+    logger.info("=" * 50)
+
+
 def main() -> None:
     """主函数，编排整个分析流水线。"""
     logger.info("=" * 50)
@@ -284,6 +367,11 @@ def main() -> None:
     logger.info(f"  股票池大小: {config.filter.pool_size}")
     logger.info(f"  请求延迟: {config.request_delay_range[0]}-{config.request_delay_range[1]}秒")
     logger.info(f"  回溯天数: {config.lookback_days}")
+
+    # V2 管道分支
+    if getattr(config, "use_v2_pipeline", False):
+        _run_v2_pipeline(config, is_ci)
+        return
 
     # 2. 并行获取股票池、ETF池、新闻（三者互不依赖）
     logger.info("开始并行获取股票池、ETF池、新闻...")
@@ -728,4 +816,19 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="A股智能选股分析系统")
+    parser.add_argument("--v2", action="store_true", help="使用 V2 管道")
+    parser.add_argument("--realtime", action="store_true", help="V2 实时监控模式")
+    args = parser.parse_args()
+
+    if args.v2 or args.realtime:
+        # 临时覆盖配置
+        cfg = load_config()
+        cfg.use_v2_pipeline = True
+        if args.realtime:
+            cfg.realtime_mode = True
+        _run_v2_pipeline(cfg)
+    else:
+        main()

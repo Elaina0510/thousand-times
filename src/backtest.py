@@ -1,13 +1,10 @@
-"""回测框架 — 基于AKShare历史数据验证策略有效性。
+"""回测引擎 — 与生产共用因子计算代码.
 
-使用AKShare获取历史数据，模拟策略在历史区间的表现：
-- 胜率（买入后N日上涨的概率）
-- 平均收益
-- 最大回撤
-- 夏普比率
+使用 pipeline/factors.py 和 pipeline/signal.py 进行信号计算，
+消除回测与生产之间的信号不一致。
 
 用法：
-    python src/backtest.py [--days 90] [--pool-size 50]
+    python src/backtest.py [--pool-size 20] [--days 60] [--hold-days 1,3,5,10]
 """
 
 from __future__ import annotations
@@ -25,399 +22,428 @@ logger = logging.getLogger("thousand-times")
 
 
 @dataclass
-class BacktestConfig:
-    """回测配置。"""
+class BacktestTrade:
+    """单笔交易记录。"""
 
-    lookback_days: int = 120  # 历史数据回溯天数
-    hold_days: list[int] = field(default_factory=lambda: [1, 3, 5, 10])  # 持仓天数
-    pool_size: int = 50  # 回测股票池大小（减少计算量）
-    buy_threshold: float = 70.0  # 买入阈值
-    sell_threshold: float = 30.0  # 卖出阈值
+    date: str
+    code: str
+    action: str  # "buy" or "sell"
+    price: float
+    shares: int = 0
+    amount: float = 0.0
+    commission: float = 0.0
 
 
 @dataclass
 class BacktestResult:
-    """单只股票的回测结果。"""
+    """回测汇总结果。"""
 
-    code: str
-    name: str
-    signal_date: str  # 信号触发日期
-    signal_score: float  # 信号评分
-    signal_zone: str  # 买入区/观望区/卖出区
-    # 各持仓周期的收益
-    returns: dict[int, float]  # {hold_days: return_pct}
-    # 是否触发信号
-    triggered: bool
-
-
-@dataclass
-class BacktestSummary:
-    """回测汇总。"""
-
-    total_signals: int  # 总信号数
-    buy_signals: int  # 买入信号数
-    sell_signals: int  # 卖出信号数
-    # 各持仓周期的统计
-    period_stats: dict[int, dict]  # {hold_days: {win_rate, avg_return, max_drawdown, sharpe}}
-    # 按信号分区的统计
-    zone_stats: dict[str, dict]  # {zone: {count, avg_return_5d}}
-    # 所有结果
-    results: list[BacktestResult] = field(default_factory=list)
+    period: str = ""
+    total_signals: int = 0
+    buy_signals: int = 0
+    sell_signals: int = 0
+    win_rate: float = 0.0
+    avg_return: float = 0.0
+    max_drawdown: float = 0.0
+    sharpe_ratio: float = 0.0
+    profit_factor: float = 0.0
+    calmar_ratio: float = 0.0
 
 
-def _fetch_historical_data(code: str, days: int = 120) -> pd.DataFrame:
-    """使用AKShare获取历史行情。
+def calc_sharpe(returns: list[float], risk_free: float = 0.03, periods_per_year: int = 252) -> float:
+    """计算年化夏普比率.
+
+    Args:
+        returns: 收益率序列（每个周期）。
+        risk_free: 无风险利率（年化）。
+        periods_per_year: 每年周期数。
+
+    Returns:
+        夏普比率。
+    """
+    if not returns or len(returns) < 2:
+        return 0.0
+
+    arr = np.array(returns)
+    mean_ret = np.mean(arr)
+    std_ret = np.std(arr, ddof=1)
+
+    if std_ret == 0:
+        return 0.0
+
+    # 年化
+    annualized_mean = mean_ret * periods_per_year
+    annualized_std = std_ret * np.sqrt(periods_per_year)
+
+    return (annualized_mean - risk_free) / annualized_std
+
+
+def calc_max_drawdown(equity_curve: list[float]) -> float:
+    """计算最大回撤.
+
+    Args:
+        equity_curve: 权益曲线。
+
+    Returns:
+        最大回撤（正数表示回撤比例）。
+    """
+    if not equity_curve or len(equity_curve) < 2:
+        return 0.0
+
+    peak = equity_curve[0]
+    max_dd = 0.0
+
+    for value in equity_curve:
+        if value > peak:
+            peak = value
+        dd = (peak - value) / peak if peak > 0 else 0
+        if dd > max_dd:
+            max_dd = dd
+
+    return max_dd
+
+
+def calc_calmar(avg_annual_return: float, max_dd: float) -> float:
+    """计算卡玛比率.
+
+    Args:
+        avg_annual_return: 年化平均收益率。
+        max_dd: 最大回撤。
+
+    Returns:
+        卡玛比率。
+    """
+    if max_dd == 0:
+        return 0.0
+    return avg_annual_return / max_dd
+
+
+def calc_profit_factor(returns: list[float]) -> float:
+    """计算盈亏比.
+
+    Args:
+        returns: 收益率序列。
+
+    Returns:
+        总盈利 / 总亏损，0 表示无亏损。
+    """
+    if not returns:
+        return 0.0
+
+    profits = sum(r for r in returns if r > 0)
+    losses = abs(sum(r for r in returns if r < 0))
+
+    if losses == 0:
+        return float("inf") if profits > 0 else 0.0
+
+    return profits / losses
+
+
+def _fetch_historical_data(code: str, days: int = 300) -> pd.DataFrame:
+    """获取历史行情数据.
 
     Args:
         code: 股票代码。
         days: 回溯天数。
 
     Returns:
-        历史行情DataFrame。
+        K线 DataFrame。
     """
     try:
-        import akshare as ak  # type: ignore[import-untyped]
+        from src.baostock_data import get_stock_hist_baostock
 
-        # AKShare 需要带市场前缀
-        if code.startswith("6") or code.startswith("5"):
-            symbol = f"sh{code}"
-        else:
-            symbol = f"sz{code}"
+        df = get_stock_hist_baostock(code, days=days)
+        if df is None or df.empty:
+            # 降级到 AKShare
+            return _fetch_historical_data_akshare(code, days)
+        return df
+    except Exception:
+        return _fetch_historical_data_akshare(code, days)
+
+
+def _fetch_historical_data_akshare(code: str, days: int = 300) -> pd.DataFrame:
+    """使用 AKShare 获取历史行情（降级方案）."""
+    try:
+        import akshare as ak  # type: ignore[import-untyped]
 
         df = ak.stock_zh_a_hist(
             symbol=code,
             period="daily",
             start_date=(datetime.now() - timedelta(days=days)).strftime("%Y%m%d"),
             end_date=datetime.now().strftime("%Y%m%d"),
-            adjust="qfq",  # 前复权
+            adjust="qfq",
         )
 
         if df.empty:
             return pd.DataFrame()
 
-        # 标准化列名
         df = df.rename(columns={
-            "日期": "date",
-            "开盘": "open",
-            "收盘": "close",
-            "最高": "high",
-            "最低": "low",
-            "成交量": "volume",
+            "日期": "date", "开盘": "open", "收盘": "close",
+            "最高": "high", "最低": "low", "成交量": "volume",
         })
-
         return df
-
     except Exception as e:
         logger.warning(f"AKShare 获取 {code} 历史数据失败: {e}")
         return pd.DataFrame()
 
 
 def _fetch_stock_pool_for_backtest(size: int = 50) -> pd.DataFrame:
-    """获取回测用的股票池。
-
-    使用AKShare获取当前A股股票列表，按市值取前N只。
-
-    Args:
-        size: 股票池大小。
-
-    Returns:
-        股票池DataFrame。
-    """
+    """获取回测用股票池."""
     try:
-        import akshare as ak  # type: ignore[import-untyped
+        import akshare as ak  # type: ignore[import-untyped]
 
-        # 获取A股实时行情（含市值）
         df = ak.stock_zh_a_spot_em()
-
         if df.empty:
             return pd.DataFrame()
 
-        # 标准化列名
         df = df.rename(columns={
-            "代码": "code",
-            "名称": "name",
-            "总市值": "market_cap",
-            "市盈率-动态": "pe_ttm",
+            "代码": "code", "名称": "name",
+            "总市值": "market_cap", "市盈率-动态": "pe_ttm",
         })
 
-        # 过滤：非ST、PE>0、市值>20亿
         df = df[~df["name"].str.contains("ST", na=False)]
         df = df[df["pe_ttm"] > 0]
         df = df[df["market_cap"] > 20e8]
-
-        # 按市值降序取前N只
         df = df.sort_values("market_cap", ascending=False).head(size)
 
         logger.info(f"回测股票池: {len(df)} 只")
         return df[["code", "name", "market_cap"]].reset_index(drop=True)
-
     except Exception as e:
         logger.warning(f"获取回测股票池失败: {e}")
         return pd.DataFrame()
 
 
-def _calc_signals_at_date(
-    closes: np.ndarray,
-    volumes: np.ndarray,
-    date_idx: int,
-) -> dict:
-    """在指定日期计算技术信号（简化版，用于回测）。
+def _build_data_bundle_for_date(
+    code: str,
+    kline_up_to_date: pd.DataFrame,
+    stock_pool: pd.DataFrame,
+) -> object:
+    """为指定日期构造 DataBundle（最小化版本）.
 
     Args:
-        closes: 收盘价序列。
-        volumes: 成交量序列。
-        date_idx: 当前日期索引。
+        code: 股票代码。
+        kline_up_to_date: 截至当日的K线数据。
+        stock_pool: 股票池 DataFrame。
 
     Returns:
-        技术信号字典。
+        DataBundle 对象。
     """
-    if date_idx < 20:
-        return {"score": 0, "signals": {}}
+    from src.pipeline.collect import DataBundle, FundamentalData
 
-    window = closes[:date_idx + 1]
-    vol_window = volumes[:date_idx + 1]
-
-    # MA
-    ma5 = np.mean(window[-5:])
-    ma10 = np.mean(window[-10:])
-    ma20 = np.mean(window[-20:])
-
-    # MACD (简化)
-    ema12 = window[-1]  # 简化
-    ema26 = window[-1]
-    if len(window) >= 12:
-        ema12 = np.mean(window[-12:])
-    if len(window) >= 26:
-        ema26 = np.mean(window[-26:])
-    dif = ema12 - ema26
-
-    # 量比
-    avg_vol_5 = np.mean(vol_window[-6:-1]) if len(vol_window) >= 6 else np.mean(vol_window[-5:])
-    vol_ratio = vol_window[-1] / avg_vol_5 if avg_vol_5 > 0 else 0
-
-    # 涨跌幅
-    change_pct = (window[-1] - window[-2]) / window[-2] * 100 if len(window) >= 2 else 0
-
-    # 评分
-    score = 0.0
-    signals = {}
-
-    if ma5 > ma10:
-        score += 5.0
-        signals["ma_golden"] = True
-
-    if window[-1] > ma20:
-        score += 3.0
-        signals["above_ma20"] = True
-
-    if ma5 > ma10 > ma20:
-        score += 5.0
-        signals["bullish_alignment"] = True
-
-    if dif > 0:
-        score += 3.0
-        signals["dif_positive"] = True
-
-    if change_pct > 0 and vol_ratio > 1.5:
-        score += 4.0
-        signals["volume_up"] = True
-
-    if change_pct < -2 and vol_ratio > 2.0:
-        score -= 4.0
-        signals["volume_down"] = True
-
-    return {"score": max(0, score), "signals": signals}
+    return DataBundle(
+        stock_pool=stock_pool,
+        kline_cache={code: kline_up_to_date},
+        fundamental_cache={code: FundamentalData()},
+        index_kline=pd.DataFrame(),
+        north_flow=pd.DataFrame(),
+        limit_up_count=0,
+        limit_down_count=0,
+        advance_decline_ratio=1.0,
+    )
 
 
-def run_backtest(config: BacktestConfig) -> BacktestSummary:
-    """运行回测。
+def run_backtest(config: object) -> list[BacktestResult]:
+    """运行回测.
+
+    与生产共用 pipeline/factors.py + pipeline/signal.py。
 
     Args:
-        config: 回测配置。
+        config: BacktestConfig 或 AppConfig。
 
     Returns:
-        回测汇总结果。
+        BacktestResult 列表（按 hold_days 分组）。
     """
-    logger.info(f"开始回测: 回溯{config.lookback_days}天, 股票池{config.pool_size}只")
+    # 从 config 中提取参数
+    if hasattr(config, "backtest"):
+        bt_config = config.backtest
+    else:
+        bt_config = config
+
+    pool_size = getattr(bt_config, "pool_size", 50)
+    hold_days_list = getattr(bt_config, "hold_days", [1, 3, 5, 10])
+    commission_rate = getattr(bt_config, "commission_rate", 0.001)
+    slippage = getattr(bt_config, "slippage", 0.001)
+    initial_capital = getattr(bt_config, "initial_capital", 100000.0)
+
+    logger.info(f"开始回测: 股票池 {pool_size} 只, 持仓天数 {hold_days_list}")
 
     # 获取股票池
-    pool = _fetch_stock_pool_for_backtest(config.pool_size)
+    pool = _fetch_stock_pool_for_backtest(pool_size)
     if pool.empty:
         logger.error("股票池为空，无法回测")
-        return BacktestSummary(
-            total_signals=0, buy_signals=0, sell_signals=0,
-            period_stats={}, zone_stats={},
-        )
+        return []
 
-    all_results: list[BacktestResult] = []
+    # 收集每个持仓周期的所有交易收益
+    period_returns: dict[int, list[float]] = {h: [] for h in hold_days_list}
+    period_equity: dict[int, list[float]] = {h: [initial_capital] for h in hold_days_list}
 
     for _, stock in pool.iterrows():
         code = str(stock["code"])
         name = str(stock["name"])
 
         # 获取历史数据
-        df = _fetch_historical_data(code, config.lookback_days + 30)  # 多取30天用于计算指标
-        if df.empty or len(df) < 30:
+        df = _fetch_historical_data(code, 300)
+        if df.empty or len(df) < 80:
             continue
 
-        closes = df["close"].astype(float).values
-        volumes = df["volume"].astype(float).values
-        dates = df["date"].astype(str).values
+        # 标准化列名
+        if "收盘" in df.columns:
+            close_col = "收盘"
+        elif "close" in df.columns:
+            close_col = "close"
+        else:
+            continue
 
-        # 逐日扫描信号
-        for i in range(60, len(closes) - max(config.hold_days)):
-            signal = _calc_signals_at_date(closes, volumes, i)
-            score = signal["score"]
+        closes = df[close_col].astype(float).values
+        dates = df["date"].astype(str).values if "date" in df.columns else [str(i) for i in range(len(df))]
 
-            # 判断信号区间
-            if score >= config.buy_threshold:
-                zone = "买入区"
-            elif score >= config.sell_threshold:
-                zone = "观望区"
-            else:
-                zone = "卖出区"
+        # 逐日扫描（从第60天开始，确保有足够数据计算指标）
+        for i in range(60, len(closes) - max(hold_days_list)):
+            # 构造截至当日的K线
+            kline_slice = df.iloc[:i + 1].copy()
 
-            # 只记录买入区和卖出区的信号
-            if zone in ("买入区", "卖出区"):
-                # 计算各持仓周期的收益
-                returns = {}
-                for hold in config.hold_days:
-                    if i + hold < len(closes):
-                        ret = (closes[i + hold] - closes[i]) / closes[i] * 100
-                        returns[hold] = round(ret, 2)
+            # 构造最小 DataBundle
+            single_pool = pd.DataFrame([{"code": code, "name": name}])
+            bundle = _build_data_bundle_for_date(code, kline_slice, single_pool)
 
-                all_results.append(BacktestResult(
-                    code=code,
-                    name=name,
-                    signal_date=dates[i],
-                    signal_score=score,
-                    signal_zone=zone,
-                    returns=returns,
-                    triggered=True,
-                ))
+            # 计算因子分数（复用生产代码）
+            try:
+                from src.pipeline.factors import calc_factors
+                scores = calc_factors(bundle, config, "sideways")
+                if not scores:
+                    continue
+                fs = scores[0]
+            except Exception:
+                continue
 
-    # 汇总统计
-    return _summarize_results(all_results, config)
+            # 生成信号（复用生产代码）
+            try:
+                from src.pipeline.signal import generate_signals
+                signals = generate_signals([fs], bundle, config, "sideways")
+                if not signals:
+                    continue
+                signal = signals[0]
+            except Exception:
+                continue
+
+            # 只处理买入和卖出信号
+            if signal.action not in ("buy", "sell"):
+                continue
+
+            current_price = closes[i]
+
+            # 计算各持仓周期收益
+            for hold in hold_days_list:
+                if i + hold < len(closes):
+                    future_price = closes[i + hold]
+
+                    # 考虑手续费和滑点
+                    if signal.action == "buy":
+                        entry_price = current_price * (1 + slippage)
+                        exit_price = future_price * (1 - slippage)
+                        cost = entry_price * commission_rate + exit_price * commission_rate
+                        ret = (exit_price - entry_price) / entry_price - cost / entry_price
+                    else:  # sell (做空逻辑简化为反向)
+                        entry_price = current_price * (1 - slippage)
+                        exit_price = future_price * (1 + slippage)
+                        cost = entry_price * commission_rate + exit_price * commission_rate
+                        ret = (entry_price - exit_price) / entry_price - cost / entry_price
+
+                    period_returns[hold].append(ret * 100)  # 转为百分比
+
+    # 汇总结果
+    results = []
+    for hold in hold_days_list:
+        returns = period_returns[hold]
+        if not returns:
+            results.append(BacktestResult(period=f"{hold}天", total_signals=0))
+            continue
+
+        win_count = sum(1 for r in returns if r > 0)
+        win_rate = win_count / len(returns) * 100
+        avg_return = float(np.mean(returns))
+
+        # 权益曲线
+        equity = [initial_capital]
+        for r in returns:
+            equity.append(equity[-1] * (1 + r / 100))
+
+        max_dd = calc_max_drawdown(equity) * 100
+        sharpe = calc_sharpe(returns, periods_per_year=252 // max(hold, 1))
+        pf = calc_profit_factor(returns)
+        calmar = calc_calmar(avg_return * 252 / max(hold, 1), max_dd / 100)
+
+        results.append(BacktestResult(
+            period=f"{hold}天",
+            total_signals=len(returns),
+            buy_signals=sum(1 for r in returns if r > 0),
+            sell_signals=sum(1 for r in returns if r <= 0),
+            win_rate=round(win_rate, 1),
+            avg_return=round(avg_return, 2),
+            max_drawdown=round(max_dd, 2),
+            sharpe_ratio=round(sharpe, 2),
+            profit_factor=round(pf, 2),
+            calmar_ratio=round(calmar, 2),
+        ))
+
+    return results
 
 
-def _summarize_results(
-    results: list[BacktestResult], config: BacktestConfig
-) -> BacktestSummary:
-    """汇总回测结果。
+def print_backtest_report(results: list[BacktestResult]) -> None:
+    """打印回测报告.
 
     Args:
-        results: 所有回测结果。
-        config: 回测配置。
-
-    Returns:
-        回测汇总。
+        results: BacktestResult 列表。
     """
-    buy_results = [r for r in results if r.signal_zone == "买入区"]
-    sell_results = [r for r in results if r.signal_zone == "卖出区"]
+    print("\n" + "=" * 70)
+    print("  V2 策略回测报告（与生产共用因子代码）")
+    print("=" * 70)
 
-    # 各持仓周期统计
-    period_stats: dict[int, dict] = {}
-    for hold in config.hold_days:
-        buy_returns = [r.returns.get(hold, 0) for r in buy_results if hold in r.returns]
-        sell_returns = [r.returns.get(hold, 0) for r in sell_results if hold in r.returns]
+    for r in results:
+        print(f"\n--- {r.period} ---")
+        if r.total_signals == 0:
+            print("  无信号")
+            continue
+        print(f"  总信号数: {r.total_signals}")
+        print(f"  胜率: {r.win_rate:.1f}%")
+        print(f"  平均收益: {r.avg_return:+.2f}%")
+        print(f"  最大回撤: {r.max_drawdown:.2f}%")
+        print(f"  夏普比率: {r.sharpe_ratio:.2f}")
+        print(f"  盈亏比: {r.profit_factor:.2f}")
+        print(f"  卡玛比率: {r.calmar_ratio:.2f}")
 
-        if buy_returns:
-            win_rate = sum(1 for r in buy_returns if r > 0) / len(buy_returns) * 100
-            avg_return = np.mean(buy_returns)
-            max_drawdown = min(buy_returns) if buy_returns else 0
-
-            # 夏普比率（简化：假设无风险利率3%年化）
-            if len(buy_returns) > 1:
-                std = np.std(buy_returns)
-                sharpe = (avg_return - 3 * hold / 252) / std if std > 0 else 0
-            else:
-                sharpe = 0
-
-            period_stats[hold] = {
-                "win_rate": round(win_rate, 1),
-                "avg_return": round(avg_return, 2),
-                "max_drawdown": round(max_drawdown, 2),
-                "sharpe": round(sharpe, 2),
-                "sample_size": len(buy_returns),
-            }
-
-    # 按信号分区统计
-    zone_stats: dict[str, dict] = {}
-    for zone in ("买入区", "卖出区"):
-        zone_results = [r for r in results if r.signal_zone == zone]
-        zone_returns_5d = [r.returns.get(5, 0) for r in zone_results if 5 in r.returns]
-        zone_stats[zone] = {
-            "count": len(zone_results),
-            "avg_return_5d": round(np.mean(zone_returns_5d), 2) if zone_returns_5d else 0,
-        }
-
-    return BacktestSummary(
-        total_signals=len(results),
-        buy_signals=len(buy_results),
-        sell_signals=len(sell_results),
-        period_stats=period_stats,
-        zone_stats=zone_stats,
-        results=results,
-    )
-
-
-def print_backtest_report(summary: BacktestSummary) -> None:
-    """打印回测报告。
-
-    Args:
-        summary: 回测汇总结果。
-    """
-    print("\n" + "=" * 60)
-    print("  策略回测报告")
-    print("=" * 60)
-
-    print(f"\n总信号数: {summary.total_signals}")
-    print(f"  买入信号: {summary.buy_signals}")
-    print(f"  卖出信号: {summary.sell_signals}")
-
-    print("\n--- 买入信号各持仓周期表现 ---")
-    print(f"{'持仓天数':>8} | {'胜率':>6} | {'平均收益':>8} | {'最大回撤':>8} | {'夏普比':>6} | {'样本数':>6}")
-    print("-" * 60)
-    for hold, stats in sorted(summary.period_stats.items()):
-        print(
-            f"{hold:>8}天 | "
-            f"{stats['win_rate']:>5.1f}% | "
-            f"{stats['avg_return']:>+7.2f}% | "
-            f"{stats['max_drawdown']:>+7.2f}% | "
-            f"{stats['sharpe']:>6.2f} | "
-            f"{stats['sample_size']:>6}"
-        )
-
-    print("\n--- 信号分区统计 ---")
-    for zone, stats in summary.zone_stats.items():
-        print(f"  {zone}: {stats['count']}个信号, 5日平均收益 {stats['avg_return_5d']:+.2f}%")
-
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
 
 
 def main() -> None:
-    """回测主入口。"""
+    """回测 CLI 入口。"""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    parser = argparse.ArgumentParser(description="A股策略回测")
-    parser.add_argument("--days", type=int, default=120, help="历史回溯天数")
-    parser.add_argument("--pool-size", type=int, default=50, help="股票池大小")
-    parser.add_argument("--buy-threshold", type=float, default=70.0, help="买入阈值")
-    parser.add_argument("--sell-threshold", type=float, default=30.0, help="卖出阈值")
+    parser = argparse.ArgumentParser(description="A股策略回测（V2 管道版）")
+    parser.add_argument("--pool-size", type=int, default=20, help="股票池大小")
+    parser.add_argument("--hold-days", type=str, default="1,3,5,10", help="持仓天数（逗号分隔）")
+    parser.add_argument("--commission", type=float, default=0.001, help="手续费率")
+    parser.add_argument("--slippage", type=float, default=0.001, help="滑点")
     args = parser.parse_args()
 
-    config = BacktestConfig(
-        lookback_days=args.days,
-        pool_size=args.pool_size,
-        buy_threshold=args.buy_threshold,
-        sell_threshold=args.sell_threshold,
-    )
+    hold_days = [int(d) for d in args.hold_days.split(",")]
 
-    summary = run_backtest(config)
-    print_backtest_report(summary)
+    from src.config import BacktestConfig, AppConfig
+
+    bt_config = BacktestConfig(
+        pool_size=args.pool_size,
+        hold_days=hold_days,
+        commission_rate=args.commission,
+        slippage=args.slippage,
+    )
+    # 包装为 AppConfig 以兼容 pipeline
+    app_config = AppConfig(backtest=bt_config)
+
+    results = run_backtest(app_config)
+    print_backtest_report(results)
 
 
 if __name__ == "__main__":

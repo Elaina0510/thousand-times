@@ -134,6 +134,12 @@ def stage_collect(config: object, regime: object | None = None) -> DataBundle:
     # 8. 获取新闻和政策分析
     news_items, policy_impacts = _fetch_news_data(config)
 
+    # 9. 获取行业资金流向
+    sector_flow = _fetch_sector_flow()
+
+    # 10. 获取宏观指标
+    macro_indicators = _fetch_macro_indicators()
+
     return DataBundle(
         index_kline=index_kline,
         stock_pool=stock_pool,
@@ -144,8 +150,8 @@ def stage_collect(config: object, regime: object | None = None) -> DataBundle:
         limit_up_count=limit_up,
         limit_down_count=limit_down,
         advance_decline_ratio=advance_decline_ratio,
-        macro_indicators={},
-        sector_flow=pd.DataFrame(),
+        macro_indicators=macro_indicators,
+        sector_flow=sector_flow,
         news_items=news_items,
         policy_impacts=policy_impacts,
         etf_pool=etf_pool,
@@ -231,3 +237,25 @@ def _fetch_news_data(config: object) -> tuple[list, list]:
     except Exception as e:
         logger.warning(f"获取新闻数据失败，使用空列表: {e}")
         return [], []
+
+
+def _fetch_sector_flow() -> pd.DataFrame:
+    """获取行业资金流向数据。"""
+    try:
+        from src.data_sources.sector_flow import fetch_sector_flow
+        return fetch_sector_flow(indicator="今日")
+    except Exception as e:
+        logger.warning(f"获取行业资金流向失败: {e}")
+        return pd.DataFrame()
+
+
+def _fetch_macro_indicators() -> dict[str, float]:
+    """获取宏观经济指标。"""
+    try:
+        from src.data_sources.macro import fetch_macro_indicators
+        raw = fetch_macro_indicators()
+        # 过滤掉 None 值，只保留有效数据
+        return {k: v for k, v in raw.items() if v is not None}
+    except Exception as e:
+        logger.warning(f"获取宏观指标失败: {e}")
+        return {}
