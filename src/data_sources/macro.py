@@ -6,8 +6,19 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 logger = logging.getLogger("thousand-times")
+
+# API 超时时间（秒）
+_API_TIMEOUT = 15
+
+
+def _call_with_timeout(func, *args, timeout: int = _API_TIMEOUT):
+    """带超时保护的函数调用。"""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args)
+        return future.result(timeout=timeout)
 
 
 def fetch_macro_indicators() -> dict[str, float | None]:
@@ -34,7 +45,7 @@ def fetch_macro_indicators() -> dict[str, float | None]:
 
     # CPI
     try:
-        cpi_df = ak.macro_china_cpi_monthly()
+        cpi_df = _call_with_timeout(ak.macro_china_cpi_monthly)
         if cpi_df is not None and not cpi_df.empty:
             # 列名: 商品, 日期, 今值, 预测值, 前值
             val = None
@@ -55,7 +66,7 @@ def fetch_macro_indicators() -> dict[str, float | None]:
 
     # PMI
     try:
-        pmi_df = ak.macro_china_pmi()
+        pmi_df = _call_with_timeout(ak.macro_china_pmi)
         if pmi_df is not None and not pmi_df.empty:
             # 列名: 月份, 制造业-指数, 制造业-同比增长, ...
             if "制造业-指数" in pmi_df.columns:
@@ -68,7 +79,7 @@ def fetch_macro_indicators() -> dict[str, float | None]:
 
     # M2 增速
     try:
-        m2_df = ak.macro_china_money_supply()
+        m2_df = _call_with_timeout(ak.macro_china_money_supply)
         if m2_df is not None and not m2_df.empty:
             # 列名可能包含 "M2-同比" 或类似
             m2_col = None

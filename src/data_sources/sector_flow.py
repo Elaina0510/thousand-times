@@ -6,10 +6,14 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 import pandas as pd
 
 logger = logging.getLogger("thousand-times")
+
+# API 超时时间（秒）
+_API_TIMEOUT = 15
 
 
 def fetch_sector_flow(indicator: str = "今日") -> pd.DataFrame:
@@ -33,7 +37,11 @@ def fetch_sector_flow(indicator: str = "今日") -> pd.DataFrame:
         return pd.DataFrame()
 
     try:
-        df = ak.stock_sector_fund_flow_rank(indicator=indicator, sector_type="行业资金流")
+        # 使用线程池添加超时保护，防止 AKShare 请求卡死
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(ak.stock_sector_fund_flow_rank, indicator=indicator, sector_type="行业资金流")
+            df = future.result(timeout=_API_TIMEOUT)
+
         if df is None or df.empty:
             logger.warning("行业资金流向数据为空")
             return pd.DataFrame()
@@ -43,6 +51,9 @@ def fetch_sector_flow(indicator: str = "今日") -> pd.DataFrame:
 
         logger.info(f"获取行业资金流向成功: {len(df)} 个行业")
         return df.reset_index(drop=True)
+    except FuturesTimeout:
+        logger.warning(f"获取行业资金流向超时 ({_API_TIMEOUT}s)")
+        return pd.DataFrame()
     except Exception as e:
         logger.error(f"获取行业资金流向失败: {e}")
         return pd.DataFrame()

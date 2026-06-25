@@ -6,10 +6,13 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 import pandas as pd
 
 logger = logging.getLogger("thousand-times")
+
+_API_TIMEOUT = 15
 
 
 def fetch_north_flow(days: int = 5) -> pd.DataFrame:
@@ -24,11 +27,17 @@ def fetch_north_flow(days: int = 5) -> pd.DataFrame:
     """
     try:
         import akshare as ak  # type: ignore[import-untyped]
-        df = ak.stock_hsgt_hist_em(symbol="北向资金")
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(ak.stock_hsgt_hist_em, symbol="北向资金")
+            df = future.result(timeout=_API_TIMEOUT)
         if df is None or df.empty:
             logger.warning("北向资金数据为空")
             return pd.DataFrame()
         return df.tail(days).reset_index(drop=True)
+    except FuturesTimeout:
+        logger.warning(f"获取北向资金超时 ({_API_TIMEOUT}s)")
+        return pd.DataFrame()
     except Exception as e:
         logger.error(f"获取北向资金失败: {e}")
         return pd.DataFrame()
