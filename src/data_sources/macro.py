@@ -37,11 +37,19 @@ def fetch_macro_indicators() -> dict[str, float | None]:
         cpi_df = ak.macro_china_cpi_monthly()
         if cpi_df is not None and not cpi_df.empty:
             # 列名: 商品, 日期, 今值, 预测值, 前值
+            val = None
             if "今值" in cpi_df.columns:
-                result["cpi"] = float(cpi_df.iloc[-1]["今值"])
+                val = cpi_df.iloc[-1]["今值"]
             elif len(cpi_df.columns) >= 3:
-                result["cpi"] = float(cpi_df.iloc[-1].iloc[2])
-            logger.info(f"CPI: {result['cpi']}")
+                val = cpi_df.iloc[-1].iloc[2]
+            if val is not None:
+                import math
+                float_val = float(val)
+                if not math.isnan(float_val):
+                    result["cpi"] = float_val
+                    logger.info(f"CPI: {result['cpi']}")
+                else:
+                    logger.warning("CPI 值为 NaN，跳过")
     except Exception as e:
         logger.warning(f"获取CPI失败: {e}")
 

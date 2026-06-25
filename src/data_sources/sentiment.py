@@ -37,10 +37,19 @@ def fetch_limit_stats(date: str) -> dict[str, int]:
         zt = ak.stock_zt_pool_em(date=date)
         if zt is not None and not zt.empty:
             result["limit_up_count"] = len(zt)
-            # 解析连板天数: "2天" -> 2
+            # 解析连板天数: "2天" -> 2, "5/5天" -> 5
             if "涨停统计" in zt.columns:
-                consecutive = zt["涨停统计"].str.split("天").str[0]
-                result["max_consecutive"] = int(consecutive.astype(int).max())
+                try:
+                    raw = zt["涨停统计"].astype(str).str.split("天").str[0]
+                    # 处理 "5/5" 格式（取斜杠前的数字）
+                    raw = raw.str.split("/").str[0]
+                    # 转为数值，忽略无法解析的值
+                    numeric = pd.to_numeric(raw, errors="coerce")
+                    valid = numeric.dropna()
+                    if not valid.empty:
+                        result["max_consecutive"] = int(valid.max())
+                except Exception as parse_e:
+                    logger.debug(f"连板天数解析异常: {parse_e}")
     except Exception as e:
         logger.warning(f"获取涨停统计失败: {e}")
 
