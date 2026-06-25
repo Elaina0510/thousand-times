@@ -75,7 +75,7 @@ def fetch_index_kline(symbol: str, days: int = 120) -> pd.DataFrame:
         API 失败时返回空 DataFrame。
     """
     try:
-        from src.baostock_data import get_index_hist_baostock
+        from baostock_data import get_index_hist_baostock
 
         # 将 sh000001 格式转为 000001
         code = symbol.replace("sh", "").replace("sz", "")
@@ -115,14 +115,10 @@ def stage_collect(config: object, regime: object | None = None) -> DataBundle:
     fundamental_cache = _fetch_fundamentals_batch(codes)
 
     # 5. 获取北向资金
-    from src.data_sources.capital_flow import fetch_north_flow
-    north_flow = fetch_north_flow(days=20)
+    north_flow = _fetch_north_flow()
 
     # 6. 获取涨跌停统计
-    from src.data_sources.sentiment import fetch_limit_stats
-    import datetime
-    today = datetime.datetime.now().strftime("%Y%m%d")
-    limit_stats = fetch_limit_stats(today)
+    limit_stats = _fetch_limit_stats()
 
     limit_up = limit_stats.get("limit_up_count", 0)
     limit_down = limit_stats.get("limit_down_count", 0)
@@ -162,8 +158,8 @@ def stage_collect(config: object, regime: object | None = None) -> DataBundle:
 def _fetch_stock_pool(config: object) -> pd.DataFrame:
     """获取股票池，复用现有 stock_filter 模块。"""
     try:
-        from src.stock_filter import get_stock_pool
-        from src.config import FilterConfig
+        from stock_filter import get_stock_pool
+        from config import FilterConfig
         if hasattr(config, "filter"):
             return get_stock_pool(config.filter)
         return get_stock_pool(FilterConfig())
@@ -177,7 +173,7 @@ def _batch_fetch_klines(codes: list[str], days: int = 120) -> dict[str, pd.DataF
     if not codes:
         return {}
     try:
-        from src.baostock_data import get_stock_hist_batch_baostock
+        from baostock_data import get_stock_hist_batch_baostock
         return get_stock_hist_batch_baostock(codes, days=days)
     except Exception as e:
         logger.error(f"批量获取K线失败: {e}")
@@ -189,7 +185,7 @@ def _fetch_fundamentals_batch(codes: list[str]) -> dict[str, FundamentalData]:
     if not codes:
         return {}
     try:
-        from src.fundamental_analysis import get_fundamental_data_batch, FundamentalData as FundData
+        from fundamental_analysis import get_fundamental_data_batch, FundamentalData as FundData
 
         raw = get_fundamental_data_batch(codes)
         result: dict[str, FundamentalData] = {}
@@ -214,7 +210,7 @@ def _fetch_fundamentals_batch(codes: list[str]) -> dict[str, FundamentalData]:
 def _fetch_etf_data(config: object) -> tuple[list, dict[str, pd.DataFrame]]:
     """获取 ETF 数据，复用现有 etf_analyzer 模块。"""
     try:
-        from src.etf_analyzer import get_etf_pool
+        from etf_analyzer import get_etf_pool
         return get_etf_pool(config)
     except Exception as e:
         logger.error(f"获取 ETF 数据失败: {e}")
@@ -224,7 +220,7 @@ def _fetch_etf_data(config: object) -> tuple[list, dict[str, pd.DataFrame]]:
 def _fetch_news_data(config: object) -> tuple[list, list]:
     """获取新闻和政策分析数据。"""
     try:
-        from src.news_analysis import fetch_news, filter_by_credibility, analyze_policy_impact
+        from news_analysis import fetch_news, filter_by_credibility, analyze_policy_impact
         raw = fetch_news()
         news_items = filter_by_credibility(raw)
 
@@ -242,7 +238,7 @@ def _fetch_news_data(config: object) -> tuple[list, list]:
 def _fetch_sector_flow() -> pd.DataFrame:
     """获取行业资金流向数据。"""
     try:
-        from src.data_sources.sector_flow import fetch_sector_flow
+        from data_sources.sector_flow import fetch_sector_flow
         return fetch_sector_flow(indicator="今日")
     except Exception as e:
         logger.warning(f"获取行业资金流向失败: {e}")
@@ -252,10 +248,32 @@ def _fetch_sector_flow() -> pd.DataFrame:
 def _fetch_macro_indicators() -> dict[str, float]:
     """获取宏观经济指标。"""
     try:
-        from src.data_sources.macro import fetch_macro_indicators
+        from data_sources.macro import fetch_macro_indicators
         raw = fetch_macro_indicators()
         # 过滤掉 None 值，只保留有效数据
         return {k: v for k, v in raw.items() if v is not None}
     except Exception as e:
         logger.warning(f"获取宏观指标失败: {e}")
         return {}
+
+
+def _fetch_north_flow() -> pd.DataFrame:
+    """获取北向资金数据。"""
+    try:
+        from data_sources.capital_flow import fetch_north_flow
+        return fetch_north_flow(days=20)
+    except Exception as e:
+        logger.warning(f"获取北向资金失败: {e}")
+        return pd.DataFrame()
+
+
+def _fetch_limit_stats() -> dict[str, int]:
+    """获取涨跌停统计。"""
+    try:
+        from data_sources.sentiment import fetch_limit_stats
+        import datetime
+        today = datetime.datetime.now().strftime("%Y%m%d")
+        return fetch_limit_stats(today)
+    except Exception as e:
+        logger.warning(f"获取涨跌停统计失败: {e}")
+        return {"limit_up_count": 0, "limit_down_count": 0, "max_consecutive": 0}

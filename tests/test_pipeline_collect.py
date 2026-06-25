@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from src.pipeline.collect import DataBundle, FundamentalData, fetch_index_kline
+from pipeline.collect import DataBundle, FundamentalData, fetch_index_kline
 
 
 class TestDataBundle:
@@ -56,7 +56,7 @@ class TestFundamentalData:
 class TestFetchIndexKline:
     """指数K线数据采集测试。"""
 
-    @patch("src.baostock_data.get_index_hist_baostock")
+    @patch("baostock_data.get_index_hist_baostock")
     def test_returns_dataframe(self, mock_fetch: MagicMock) -> None:
         """测试返回 DataFrame。"""
         mock_df = pd.DataFrame({
@@ -71,7 +71,7 @@ class TestFetchIndexKline:
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 2
 
-    @patch("src.baostock_data.get_index_hist_baostock", side_effect=Exception("fail"))
+    @patch("baostock_data.get_index_hist_baostock", side_effect=Exception("fail"))
     def test_handles_api_error(self, mock_fetch: MagicMock) -> None:
         """测试异常时返回空 DataFrame。"""
         result = fetch_index_kline("sh000001", days=60)
@@ -82,18 +82,22 @@ class TestFetchIndexKline:
 class TestStageCollect:
     """stage_collect 主函数测试。"""
 
-    @patch("src.pipeline.collect._fetch_news_data", return_value=([], []))
-    @patch("src.pipeline.collect._fetch_etf_data", return_value=([], {}))
-    @patch("src.pipeline.collect._fetch_fundamentals_batch", return_value={})
-    @patch("src.pipeline.collect._batch_fetch_klines", return_value={})
-    @patch("src.pipeline.collect._fetch_stock_pool", return_value=pd.DataFrame())
-    @patch("src.pipeline.collect.fetch_index_kline", return_value=pd.DataFrame())
-    @patch("src.data_sources.sentiment.fetch_limit_stats", return_value={"limit_up_count": 10, "limit_down_count": 5, "max_consecutive": 3})
-    @patch("src.data_sources.capital_flow.fetch_north_flow", return_value=pd.DataFrame())
+    @patch("pipeline.collect._fetch_news_data", return_value=([], []))
+    @patch("pipeline.collect._fetch_etf_data", return_value=([], {}))
+    @patch("pipeline.collect._fetch_fundamentals_batch", return_value={})
+    @patch("pipeline.collect._batch_fetch_klines", return_value={})
+    @patch("pipeline.collect._fetch_stock_pool", return_value=pd.DataFrame())
+    @patch("pipeline.collect.fetch_index_kline", return_value=pd.DataFrame())
+    @patch("pipeline.collect._fetch_sector_flow", return_value=pd.DataFrame())
+    @patch("pipeline.collect._fetch_macro_indicators", return_value={})
+    @patch("pipeline.collect._fetch_limit_stats", return_value={"limit_up_count": 10, "limit_down_count": 5, "max_consecutive": 3})
+    @patch("pipeline.collect._fetch_north_flow", return_value=pd.DataFrame())
     def test_returns_data_bundle(
         self,
         mock_north: MagicMock,
         mock_limit: MagicMock,
+        mock_macro: MagicMock,
+        mock_sector: MagicMock,
         mock_index: MagicMock,
         mock_pool: MagicMock,
         mock_klines: MagicMock,
@@ -102,8 +106,8 @@ class TestStageCollect:
         mock_news: MagicMock,
     ) -> None:
         """测试返回 DataBundle。"""
-        from src.pipeline.collect import stage_collect
-        from src.config import AppConfig
+        from pipeline.collect import stage_collect
+        from config import AppConfig
 
         config = AppConfig()
         result = stage_collect(config, regime=None)

@@ -52,11 +52,11 @@ def calc_factors(data: object, config: object, regime_state: str = "sideways") -
     Returns:
         FactorScores 列表，按 total 降序排列。
     """
-    from src.factors.technical import calc_technical_factor
-    from src.factors.fundamental import calc_fundamental_factor
-    from src.factors.capital import calc_capital_factor
-    from src.factors.sentiment import calc_sentiment_factor
-    from src.factors.momentum import calc_momentum_factor
+    from factors.technical import calc_technical_factor
+    from factors.fundamental import calc_fundamental_factor
+    from factors.capital import calc_capital_factor
+    from factors.sentiment import calc_sentiment_factor
+    from factors.momentum import calc_momentum_factor
 
     stock_pool = getattr(data, "stock_pool", pd.DataFrame())
     kline_cache = getattr(data, "kline_cache", {})

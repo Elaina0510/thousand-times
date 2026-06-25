@@ -203,7 +203,7 @@ def push_report(report: str, config: object) -> bool:
             logger.warning("PUSHPLUS_TOKEN 未设置，跳过推送")
             return False
 
-        from src.push_service import push_to_wechat
+        from push_service import push_to_wechat
         report_date = datetime.now().strftime("%Y-%m-%d")
         success = push_to_wechat(
             title=f"A股智能选股分析报告 — {report_date}",
@@ -239,7 +239,7 @@ def push_alerts(alerts: list, config: object) -> bool:
             logger.warning("PUSHPLUS_TOKEN 未设置，跳过提醒推送")
             return False
 
-        from src.push_service import push_to_wechat
+        from push_service import push_to_wechat
 
         # 合并提醒为一条消息
         lines = ["# ⚡ 实时提醒\n"]
@@ -322,7 +322,7 @@ def _quick_collect(config: object) -> object:
     Returns:
         DataBundle。
     """
-    from src.pipeline.collect import stage_collect
+    from pipeline.collect import stage_collect
     # 复用 stage_collect，但可以通过缓存加速
     return stage_collect(config)
 
@@ -340,9 +340,9 @@ def run_realtime(config: object) -> None:
     Args:
         config: AppConfig。
     """
-    from src.pipeline.collect import stage_collect
-    from src.pipeline.regime import judge_market_regime
-    from src.pipeline.factors import calc_factors
+    from pipeline.collect import stage_collect
+    from pipeline.regime import judge_market_regime
+    from pipeline.factors import calc_factors
 
     realtime_config = getattr(config, "realtime", None)
     check_interval = getattr(realtime_config, "check_interval_minutes", 30) if realtime_config else 30

@@ -57,7 +57,7 @@ def judge_market_regime(data: object, config: object) -> MarketRegime:
     index_kline = getattr(data, "index_kline", pd.DataFrame())
     regime_config = getattr(config, "regime", None)
     if regime_config is None:
-        from src.config import RegimeConfig
+        from config import RegimeConfig
         regime_config = RegimeConfig()
 
     if not index_kline.empty:
@@ -101,7 +101,7 @@ def judge_market_regime(data: object, config: object) -> MarketRegime:
     description = f"{descriptions[state]} (置信度: {confidence:.0%})"
 
     # 选择权重
-    from src.config import ScoreWeightConfig
+    from config import ScoreWeightConfig
     factor_weights = getattr(config, "factor_weights", None)
     if factor_weights:
         weights_map = {"bull": factor_weights.bull, "bear": factor_weights.bear, "sideways": factor_weights.sideways}

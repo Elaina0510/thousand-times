@@ -9,10 +9,10 @@
 
 from __future__ import annotations
 
-from src.data_sources.capital_flow import fetch_north_flow, fetch_north_flow_stock
-from src.data_sources.sentiment import fetch_limit_stats
-from src.data_sources.sector_flow import fetch_sector_flow, fetch_sector_flow_top_n, calc_sector_flow_score
-from src.data_sources.macro import fetch_macro_indicators, calc_macro_score
+from data_sources.capital_flow import fetch_north_flow, fetch_north_flow_stock
+from data_sources.sentiment import fetch_limit_stats
+from data_sources.sector_flow import fetch_sector_flow, fetch_sector_flow_top_n, calc_sector_flow_score
+from data_sources.macro import fetch_macro_indicators, calc_macro_score
 
 __all__ = [
     "capital_flow",
