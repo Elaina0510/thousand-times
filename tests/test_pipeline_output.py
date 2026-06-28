@@ -63,7 +63,7 @@ class TestGenerateReportMd:
         signals = [MockSignal("buy")]
         regime = MockRegime()
         report = generate_report_md(signals, [], regime, None)
-        assert "统计摘要" in report
+        assert "因子分布统计" in report
 
 
 class TestIsTradingSession:

@@ -152,37 +152,110 @@ def generate_report_md(
     else:
         lines.append("## 🔴 卖出信号: 无\n")
 
-    # 4. 重点关注（置信度最高的 3 只）
-    top_signals = [s for s in signals if s.action in ("buy", "sell")][:3]
-    if top_signals:
-        lines.append("## ⭐ 重点关注\n")
-        for s in top_signals:
-            fs = getattr(s, "factor_scores", None)
-            action_cn = "买入" if s.action == "buy" else "卖出"
-            lines.append(f"**{s.name}** ({s.code}) — {action_cn} 置信度 {s.confidence:.0%}")
+    # 4. Top 股票排行（按因子总分）
+    lines.append("## 📈 因子评分排行\n")
+    lines.append("| 排名 | 股票 | 综合分 | 技术 | 基本面 | 资金 | 情绪 | 动量 | 百分位 |")
+    lines.append("|------|------|--------|------|--------|------|------|------|--------|")
 
-            if fs:
-                # 子因子详情
-                tech_detail = getattr(fs, "technical_detail", {})
-                if tech_detail:
-                    detail_str = " | ".join(f"{k}: {v:.0f}" for k, v in tech_detail.items())
-                    lines.append(f"  - 技术面: {detail_str}")
+    # 从 signals 中提取所有股票的因子分数并排序
+    all_scores = []
+    for s in signals:
+        fs = getattr(s, "factor_scores", None)
+        if fs:
+            all_scores.append(fs)
+    all_scores.sort(key=lambda x: getattr(x, "total", 0), reverse=True)
 
-                fund_detail = getattr(fs, "fundamental_detail", {})
-                if fund_detail:
-                    detail_str = " | ".join(f"{k}: {v:.0f}" for k, v in fund_detail.items())
-                    lines.append(f"  - 基本面: {detail_str}")
+    # Top 10
+    for i, fs in enumerate(all_scores[:10]):
+        lines.append(
+            f"| {i+1} | {getattr(fs, 'name', '')} ({getattr(fs, 'code', '')}) | "
+            f"{getattr(fs, 'total', 0):.1f} | "
+            f"{getattr(fs, 'technical', 0):.0f} | "
+            f"{getattr(fs, 'fundamental', 0):.0f} | "
+            f"{getattr(fs, 'capital', 0):.0f} | "
+            f"{getattr(fs, 'sentiment', 0):.0f} | "
+            f"{getattr(fs, 'momentum', 0):.0f} | "
+            f"{getattr(fs, 'rank_percentile', 0):.0f}% |"
+        )
+    lines.append("")
+
+    # Bottom 5（需要关注风险的）
+    if len(all_scores) > 5:
+        lines.append("### ⚠️ 评分最低的 5 只\n")
+        lines.append("| 排名 | 股票 | 综合分 | 技术 | 基本面 | 资金 | 情绪 | 动量 |")
+        lines.append("|------|------|--------|------|--------|------|------|------|")
+        for i, fs in enumerate(all_scores[-5:]):
+            rank = len(all_scores) - 4 + i
+            lines.append(
+                f"| {rank} | {getattr(fs, 'name', '')} ({getattr(fs, 'code', '')}) | "
+                f"{getattr(fs, 'total', 0):.1f} | "
+                f"{getattr(fs, 'technical', 0):.0f} | "
+                f"{getattr(fs, 'fundamental', 0):.0f} | "
+                f"{getattr(fs, 'capital', 0):.0f} | "
+                f"{getattr(fs, 'sentiment', 0):.0f} | "
+                f"{getattr(fs, 'momentum', 0):.0f} |"
+            )
+        lines.append("")
+
+    # 5. Top 3 详细分析
+    if all_scores:
+        lines.append("## ⭐ Top 3 详细分析\n")
+        for i, fs in enumerate(all_scores[:3]):
+            lines.append(f"### {i+1}. {getattr(fs, 'name', '')} ({getattr(fs, 'code', '')}) — 综合分 {getattr(fs, 'total', 0):.1f}\n")
+
+            # 子因子详情
+            tech_detail = getattr(fs, "technical_detail", {})
+            if tech_detail:
+                detail_str = " | ".join(f"{k}: {v:.0f}" for k, v in tech_detail.items())
+                lines.append(f"- 技术面: {detail_str}")
+
+            fund_detail = getattr(fs, "fundamental_detail", {})
+            if fund_detail:
+                detail_str = " | ".join(f"{k}: {v:.0f}" for k, v in fund_detail.items())
+                lines.append(f"- 基本面: {detail_str}")
+
+            mom_detail = getattr(fs, "momentum_detail", {})
+            if mom_detail:
+                detail_str = " | ".join(f"{k}: {v:.0f}" for k, v in mom_detail.items())
+                lines.append(f"- 动量: {detail_str}")
+
+            # 对应信号的投票和关键价位
+            matching = [s for s in signals if getattr(s, "code", "") == getattr(fs, "code", "")]
+            if matching:
+                s = matching[0]
+                votes = getattr(s, "votes", [])
+                if votes:
+                    vote_strs = [f"{v.source}:{v.vote}" for v in votes]
+                    lines.append(f"- 投票: {' | '.join(vote_strs)}")
+                kp = getattr(s, "key_prices", None)
+                if kp and kp.current_price > 0:
+                    lines.append(f"- 当前价: {kp.current_price:.2f} | 支撑: {kp.support:.2f} | 压力: {kp.resistance:.2f}")
 
             lines.append("")
 
-    # 5. 统计摘要
-    total = len(signals)
-    hold_count = sum(1 for s in signals if s.action == "hold")
-    lines.append("## 📊 统计摘要\n")
-    lines.append(f"- 分析股票总数: {total}")
-    lines.append(f"- 买入信号: {len(buy_signals)}")
-    lines.append(f"- 卖出信号: {len(sell_signals)}")
-    lines.append(f"- 观望: {hold_count}\n")
+    # 6. 因子分布统计
+    if all_scores:
+        totals = [getattr(fs, "total", 0) for fs in all_scores]
+        lines.append("## 📊 因子分布统计\n")
+        lines.append(f"- 分析股票总数: {len(all_scores)}")
+        lines.append(f"- 平均综合分: {sum(totals)/len(totals):.1f}")
+        lines.append(f"- 最高分: {max(totals):.1f}")
+        lines.append(f"- 最低分: {min(totals):.1f}")
+        lines.append(f"- 买入信号: {len(buy_signals)}")
+        lines.append(f"- 卖出信号: {len(sell_signals)}")
+        lines.append(f"- 观望: {len(signals) - len(buy_signals) - len(sell_signals)}\n")
+
+        # 各因子类别平均分
+        tech_avg = sum(getattr(fs, "technical", 0) for fs in all_scores) / len(all_scores)
+        fund_avg = sum(getattr(fs, "fundamental", 0) for fs in all_scores) / len(all_scores)
+        cap_avg = sum(getattr(fs, "capital", 0) for fs in all_scores) / len(all_scores)
+        sent_avg = sum(getattr(fs, "sentiment", 0) for fs in all_scores) / len(all_scores)
+        mom_avg = sum(getattr(fs, "momentum", 0) for fs in all_scores) / len(all_scores)
+        lines.append("### 各因子类别平均分\n")
+        lines.append(f"| 技术面 | 基本面 | 资金面 | 情绪面 | 动量 |")
+        lines.append(f"|--------|--------|--------|--------|------|")
+        lines.append(f"| {tech_avg:.1f} | {fund_avg:.1f} | {cap_avg:.1f} | {sent_avg:.1f} | {mom_avg:.1f} |")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -279,7 +352,7 @@ def stage_output(signals: list, regime: object, data: object, config: object) ->
     scores = []  # 从 signals 中提取
     report = generate_report_md(signals, scores, regime, data)
 
-    # 保存到文件
+    # 保存 Markdown 到文件
     report_date = datetime.now().strftime("%Y-%m-%d")
     logs_dir = "logs"
     os.makedirs(logs_dir, exist_ok=True)
@@ -290,6 +363,20 @@ def stage_output(signals: list, regime: object, data: object, config: object) ->
         logger.info(f"报告已保存: {report_path}")
     except Exception as e:
         logger.warning(f"报告保存失败: {e}")
+
+    # 生成 HTML 报告（用于 GitHub Pages）
+    try:
+        from html_report import generate_html_report
+        os.makedirs("public", exist_ok=True)
+        html_path = generate_html_report(
+            report_text=report,
+            chart_dir="charts",
+            output_dir="public",
+            report_date=report_date,
+        )
+        logger.info(f"HTML报告已生成: {html_path}")
+    except Exception as e:
+        logger.warning(f"HTML报告生成失败: {e}")
 
     # 推送
     push_report(report, config)
