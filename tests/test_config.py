@@ -73,7 +73,7 @@ class TestFilterConfig:
         config = FilterConfig()
         assert config.min_market_cap == 20e8
         assert config.min_listing_months == 3
-        assert config.pool_size == 200
+        assert config.pool_size == 300
 
 
 class TestDefaultEtfPool:
