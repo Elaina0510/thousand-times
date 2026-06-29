@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger("thousand-times")
@@ -52,11 +51,11 @@ def calc_factors(data: object, config: object, regime_state: str = "sideways") -
     Returns:
         FactorScores 列表，按 total 降序排列。
     """
-    from factors.technical import calc_technical_factor
-    from factors.fundamental import calc_fundamental_factor
     from factors.capital import calc_capital_factor
-    from factors.sentiment import calc_sentiment_factor
+    from factors.fundamental import calc_fundamental_factor
     from factors.momentum import calc_momentum_factor
+    from factors.sentiment import calc_sentiment_factor
+    from factors.technical import calc_technical_factor
 
     stock_pool = getattr(data, "stock_pool", pd.DataFrame())
     kline_cache = getattr(data, "kline_cache", {})
@@ -67,6 +66,7 @@ def calc_factors(data: object, config: object, regime_state: str = "sideways") -
     ad_ratio = getattr(data, "advance_decline_ratio", 1.0)
     policy_impacts = getattr(data, "policy_impacts", [])
     index_kline = getattr(data, "index_kline", pd.DataFrame())
+    sector_flow = getattr(data, "sector_flow", pd.DataFrame())
 
     # 获取权重
     factor_weights = getattr(config, "factor_weights", None)
@@ -91,6 +91,7 @@ def calc_factors(data: object, config: object, regime_state: str = "sideways") -
     for _, row in stock_pool.iterrows():
         code = str(row.get("code", ""))
         name = str(row.get("name", ""))
+        industry = str(row.get("industry", "")) if "industry" in stock_pool.columns else ""
 
         kline = kline_cache.get(code, pd.DataFrame())
         fund = fundamental_cache.get(code, None)
@@ -104,10 +105,19 @@ def calc_factors(data: object, config: object, regime_state: str = "sideways") -
             pe_ttm=fund.pe_ttm if fund else 50.0,
             revenue_growth=fund.revenue_growth if fund else 0.0,
         )
-        cap_result = calc_capital_factor(north_flow)
+        cap_result = calc_capital_factor(
+            north_flow=north_flow,
+            kline=kline,
+            industry=industry,
+            sector_flow=sector_flow,
+        )
         sent_result = calc_sentiment_factor(
-            limit_up, limit_down, ad_ratio,
+            limit_up=limit_up,
+            limit_down=limit_down,
+            advance_decline_ratio=ad_ratio,
             policy_impacts=policy_impacts,
+            kline=kline,
+            industry=industry,
         )
         mom_result = calc_momentum_factor(kline, benchmark_kline=index_kline)
 
