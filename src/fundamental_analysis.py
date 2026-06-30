@@ -12,10 +12,7 @@ import contextlib
 import logging
 from dataclasses import dataclass
 
-import pandas as pd
-
 from config import FundamentalWeightConfig
-from utils import random_delay
 
 logger = logging.getLogger("thousand-times")
 
@@ -37,13 +34,42 @@ class FundamentalData:
     gross_margin: float | None  # 毛利率（%）
 
 
+def _get_quarters_to_try(current_year: int, current_quarter: int) -> list[tuple[int, int]]:
+    """生成回退季度列表：当前季度 → Q1 → 上一年 Q4 → Q3 → Q2 → Q1。
+
+    Args:
+        current_year: 当前年份。
+        current_quarter: 当前季度 (1-4)。
+
+    Returns:
+        [(year, quarter), ...] 按优先级排列的季度列表。
+    """
+    quarters: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+
+    # 当前季度
+    q = current_quarter
+    y = current_year
+    while q >= 1 and len(quarters) < 5:
+        key = (y, q)
+        if key not in seen:
+            seen.add(key)
+            quarters.append(key)
+        q -= 1
+        if q < 1:
+            y -= 1
+            q = 4
+
+    return quarters
+
+
 def _fetch_single_with_session(
     bs: object, code: str, current_year: int, current_quarter: int
 ) -> dict:
     """在已有 BaoStock 会话中获取单只股票的财务指标。
 
-    只尝试当前季度，4 次 API 调用（盈利/成长/偿债/现金流）。
-    首次调用失败则早期退出（避免在连接断开时继续无效请求）。
+    季度回退：当前季度 → Q1 → 上一年 Q4 → Q3 → Q2 → Q1。
+    找到第一个有数据的季度即停止。
 
     Args:
         bs: 已登录的 baostock 模块。
@@ -52,69 +78,74 @@ def _fetch_single_with_session(
         current_quarter: 当前季度。
 
     Returns:
-        包含财务指标的字典，失败返回空字典。
+        包含财务指标的字典，无数据或 API 失败返回空字典。
     """
     try:
-        if code.startswith('6') or code.startswith('5'):
-            bs_code = f'sh.{code}'
-        else:
-            bs_code = f'sz.{code}'
+        bs_code = f'sh.{code}' if code.startswith(('6', '5')) else f'sz.{code}'
 
-        result: dict = {}
-        year, quarter = current_year, current_quarter
+        quarters = _get_quarters_to_try(current_year, current_quarter)
 
-        # ── 盈利能力（核心指标，失败则放弃该股票）──
-        rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
-        if rs_profit.error_code == '0':
+        for year, quarter in quarters:
+            # ── 盈利能力 ──
+            rs_profit = bs.query_profit_data(code=bs_code, year=year, quarter=quarter)
+            if rs_profit.error_code != '0':
+                # API 层面失败，非"无数据"，继续尝试下一季度
+                continue
+
             profit_list = []
             while (rs_profit.error_code == '0') & rs_profit.next():
                 profit_list.append(rs_profit.get_row_data())
 
-            if profit_list:
-                latest = profit_list[-1]
-                fields = rs_profit.fields
+            if not profit_list:
+                # 该季度无数据，尝试下一季度
+                continue
 
-                if 'epsTTM' in fields:
-                    eps_idx = fields.index('epsTTM')
-                    result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
+            # 有数据，提取
+            latest = profit_list[-1]
+            fields = rs_profit.fields
+            result: dict = {}
 
-                if 'roeAvg' in fields:
-                    roe_idx = fields.index('roeAvg')
-                    result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
+            if 'epsTTM' in fields:
+                eps_idx = fields.index('epsTTM')
+                result['epsTTM'] = float(latest[eps_idx]) if latest[eps_idx] else 0
 
-                if 'grossProfitMargin' in fields:
-                    gpm_idx = fields.index('grossProfitMargin')
-                    val = latest[gpm_idx]
-                    if val:
-                        result['gross_margin'] = float(val) * 100
-        else:
-            # 盈利数据获取失败，可能是连接问题，早期退出
-            return {}
+            if 'roeAvg' in fields:
+                roe_idx = fields.index('roeAvg')
+                result['roeAvg'] = float(latest[roe_idx]) if latest[roe_idx] else 0
 
-        # ── 成长能力 ──
-        rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
-        if rs_growth.error_code == '0':
-            growth_list = []
-            while (rs_growth.error_code == '0') & rs_growth.next():
-                growth_list.append(rs_growth.get_row_data())
+            if 'grossProfitMargin' in fields:
+                gpm_idx = fields.index('grossProfitMargin')
+                val = latest[gpm_idx]
+                if val:
+                    result['gross_margin'] = float(val) * 100
 
-            if growth_list:
-                latest = growth_list[-1]
-                fields = rs_growth.fields
+            # ── 成长能力（同季度）──
+            rs_growth = bs.query_growth_data(code=bs_code, year=year, quarter=quarter)
+            if rs_growth.error_code == '0':
+                growth_list = []
+                while (rs_growth.error_code == '0') & rs_growth.next():
+                    growth_list.append(rs_growth.get_row_data())
 
-                if 'YOYNI' in fields:
-                    yoy_ni_idx = fields.index('YOYNI')
-                    val = latest[yoy_ni_idx]
-                    if val:
-                        result['profit_growth'] = float(val) * 100
+                if growth_list:
+                    latest = growth_list[-1]
+                    fields = rs_growth.fields
 
-                if 'YOYPNI' in fields:
-                    yoy_pni_idx = fields.index('YOYPNI')
-                    val = latest[yoy_pni_idx]
-                    if val:
-                        result['revenue_growth'] = float(val) * 100
+                    if 'YOYNI' in fields:
+                        yoy_ni_idx = fields.index('YOYNI')
+                        val = latest[yoy_ni_idx]
+                        if val:
+                            result['profit_growth'] = float(val) * 100
 
-        return result
+                    if 'YOYPNI' in fields:
+                        yoy_pni_idx = fields.index('YOYPNI')
+                        val = latest[yoy_pni_idx]
+                        if val:
+                            result['revenue_growth'] = float(val) * 100
+
+            return result
+
+        # 所有季度都无数据
+        return {}
 
     except Exception as e:
         logger.warning(f"BaoStock 获取 {code} 财务指标失败: {e}")
@@ -131,8 +162,9 @@ def _fetch_financial_indicator(code: str) -> dict:
         包含财务指标的字典，失败返回空字典。
     """
     try:
-        import baostock as bs
         from datetime import datetime
+
+        import baostock as bs
 
         lg = bs.login()
         if lg.error_code != '0':
@@ -196,8 +228,9 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
     if not codes:
         return {}
 
-    import baostock as bs
     from datetime import datetime
+
+    import baostock as bs
 
     def _login() -> bool:
         lg = bs.login()
@@ -207,10 +240,8 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
         return True
 
     def _logout() -> None:
-        try:
+        with contextlib.suppress(Exception):
             bs.logout()
-        except Exception:
-            pass
 
     if not _login():
         return {code: _empty_fundamental_data() for code in codes}
@@ -219,41 +250,54 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
     current_quarter = (datetime.now().month - 1) // 3 + 1
     results: dict[str, FundamentalData] = {}
 
-    consecutive_errors = 0
-    max_consecutive = 5
+    consecutive_api_errors = 0  # 仅计数 API 层错误（连接断开等）
+    max_consecutive_api_errors = 10  # 连续 API 错误阈值
     total_reconnects = 0
-    max_reconnects = 3  # 最多重连3次，超过则放弃
+    max_reconnects = 3
+    no_data_count = 0  # 统计无财报数据的股票数
 
     for code in codes:
+        api_error = False
+        data: dict = {}
         try:
             data = _fetch_single_with_session(bs, code, current_year, current_quarter)
-            if data:
-                results[code] = _dict_to_fundamental_data(data)
-                consecutive_errors = 0
-            else:
-                results[code] = _empty_fundamental_data()
-                consecutive_errors += 1
+            if not data:
+                no_data_count += 1
         except Exception as e:
-            consecutive_errors += 1
-            logger.warning(f"获取 {code} 基本面数据失败: {e}")
-            results[code] = _empty_fundamental_data()
+            api_error = True
+            logger.warning(f"获取 {code} 基本面数据异常: {e}")
 
-        # 连续失败则重连
-        if consecutive_errors >= max_consecutive:
+        if data:
+            results[code] = _dict_to_fundamental_data(data)
+            consecutive_api_errors = 0  # 有数据回来，重置 API 错误计数
+        else:
+            results[code] = _empty_fundamental_data()
+            if api_error:
+                consecutive_api_errors += 1
+            # 无数据不增加 consecutive_api_errors（不等于连接断开）
+
+        # 仅在连续 API 错误时重连
+        if consecutive_api_errors >= max_consecutive_api_errors:
             total_reconnects += 1
             if total_reconnects > max_reconnects:
-                logger.error(f"基本面已重连 {total_reconnects - 1} 次仍不稳定，放弃剩余股票")
+                logger.error(
+                    f"基本面 API 连续 {consecutive_api_errors} 次错误，"
+                    f"已重连 {total_reconnects - 1} 次仍不稳定，放弃剩余股票"
+                )
                 for remaining in codes[len(results):]:
                     results[remaining] = _empty_fundamental_data()
                 break
 
-            logger.warning(f"基本面连续 {consecutive_errors} 次失败，尝试重连 ({total_reconnects}/{max_reconnects})...")
+            logger.warning(
+                f"基本面 API 连续 {consecutive_api_errors} 次错误，"
+                f"尝试重连 ({total_reconnects}/{max_reconnects})..."
+            )
             _logout()
             import time
             time.sleep(1)
             if _login():
                 logger.info("基本面重连成功")
-                consecutive_errors = 0
+                consecutive_api_errors = 0
             else:
                 logger.error("基本面重连失败，跳过剩余股票")
                 for remaining in codes[len(results):]:
@@ -263,7 +307,10 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
     _logout()
 
     success = sum(1 for v in results.values() if v.roe > 0 or v.eps > 0)
-    logger.info(f"基本面数据获取完成: {success}/{len(codes)} 只有效")
+    logger.info(
+        f"基本面数据获取完成: {success}/{len(codes)} 只有效"
+        + (f"（{no_data_count} 只暂无财报数据）" if no_data_count > 0 else "")
+    )
     return results
 
 
