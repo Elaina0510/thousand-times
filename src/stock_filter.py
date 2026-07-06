@@ -212,31 +212,31 @@ def get_stock_pool(config: FilterConfig) -> pd.DataFrame:
     df = None
     stock_info = None
 
-    # 优先使用远程 API
+    # 优先使用 AKShare（CI 环境更稳定，带超时保护）
     try:
-        from remote_data import is_remote_available, get_stock_spot_remote
-        if is_remote_available():
-            logger.info("使用远程 API 获取股票数据")
-            df = get_stock_spot_remote()
+        import akshare as ak  # type: ignore[import-untyped]
+        logger.info("使用 AKShare 获取股票数据")
+
+        def _fetch_akshare():
+            return ak.stock_zh_a_spot_em()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_fetch_akshare)
+            df = future.result(timeout=90)  # 90秒超时（海外 CI 网络慢）
+    except FuturesTimeoutError:
+        logger.warning("AKShare 获取股票数据超时 (90秒)")
     except Exception as e:
-        logger.warning(f"远程 API 不可用: {e}")
+        logger.warning(f"AKShare 获取股票数据失败: {e}")
 
-    # 回退到 AKShare（带超时保护）
-    if df is None:
+    # 回退到远程 API
+    if df is None or df.empty:
         try:
-            import akshare as ak  # type: ignore[import-untyped]
-            logger.info("使用 AKShare 获取股票数据")
-
-            def _fetch_akshare():
-                return ak.stock_zh_a_spot_em()
-
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_fetch_akshare)
-                df = future.result(timeout=60)  # 60秒超时
-        except FuturesTimeoutError:
-            logger.warning("AKShare 获取股票数据超时 (60秒)")
+            from remote_data import is_remote_available, get_stock_spot_remote
+            if is_remote_available():
+                logger.info("使用远程 API 获取股票数据")
+                df = get_stock_spot_remote()
         except Exception as e:
-            logger.warning(f"AKShare 获取股票数据失败: {e}")
+            logger.warning(f"远程 API 不可用: {e}")
 
     # 最后回退到 BaoStock（带重试机制）
     if df is None or df.empty:

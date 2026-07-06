@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 from dataclasses import dataclass
+from typing import Any
 
 from config import FundamentalWeightConfig
 
@@ -213,11 +215,175 @@ def _empty_fundamental_data() -> FundamentalData:
     )
 
 
-def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
-    """批量获取多只股票的基本面数据（单会话顺序获取，断线自动重连）。
+def _fetch_fundamental_akshare(code: str) -> dict[str, Any]:
+    """使用 AKShare 东方财富业绩报表接口获取个股基本面数据。
 
-    优化：每只股票最多 2 次 API 调用（盈利+成长），失败早期退出。
-    连续连接错误时自动重新登录。
+    支持季度回退：当前季度 → Q1 → 上一年 Q4 → ... → Q1。
+    找到第一个有数据的季度即返回。
+
+    Args:
+        code: 股票代码（6位数字字符串，如 "600000"）。
+
+    Returns:
+        包含财务指标的字典，键名与 BaoStock 兼容：
+        roeAvg (小数), epsTTM, profit_growth (%), revenue_growth (%),
+        debt_ratio (%), gross_margin (%), cash_flow。
+        失败或无数据返回空字典 {}。
+    """
+    result = _fetch_fundamental_akshare_batch([code])
+    return result.get(code, {})
+
+
+def _fetch_fundamental_akshare_batch(codes: list[str]) -> dict[str, dict[str, Any]]:
+    """批量获取基本面数据（内部优化：每次 API 调用获取全市场数据后本地过滤）。
+
+    AKShare 的 stock_yjbb_em 接口返回全市场数据，逐只调用会重复下载。
+    本函数每个季度只调用一次 API，然后在本地按股票代码过滤，
+    避免对同一数据集发起数百次 HTTP 请求。
+
+    Args:
+        codes: 股票代码列表。
+
+    Returns:
+        {code: data_dict} 映射，未找到的 code 不在返回字典中。
+    """
+    if not codes:
+        return {}
+
+    try:
+        from datetime import datetime
+
+        import akshare as ak
+
+        current_year = datetime.now().year
+        current_quarter = (datetime.now().month - 1) // 3 + 1
+        quarters = _get_quarters_to_try(current_year, current_quarter)
+        quarter_end_days = {1: "31", 2: "30", 3: "30", 4: "31"}
+
+        results: dict[str, dict[str, Any]] = {}
+        remaining: set[str] = {str(c).zfill(6) for c in codes}
+
+        for year, quarter in quarters:
+            if not remaining:
+                break
+
+            month = quarter * 3
+            date_str = f"{year}{month:02d}{quarter_end_days[quarter]}"
+
+            try:
+                df = ak.stock_yjbb_em(date=date_str)
+            except Exception as e:
+                logger.debug(f"AKShare stock_yjbb_em({date_str}) 失败: {e}")
+                continue
+
+            if df is None or df.empty:
+                continue
+
+            code_col = "股票代码"
+            if code_col not in df.columns:
+                logger.warning(f"AKShare 返回数据缺少 '{code_col}' 列，可用列: {list(df.columns)}")
+                continue
+
+            # 为每只剩余股票查找数据
+            for code in list(remaining):
+                stock_mask = df[code_col].astype(str).str.strip().str.zfill(6) == code
+                stock_rows = df[stock_mask]
+
+                if stock_rows.empty:
+                    continue
+
+                row = stock_rows.iloc[-1]
+                data = _extract_akshare_row(row)
+                if data:
+                    results[code] = data
+                    remaining.discard(code)
+
+        if remaining:
+            logger.debug(
+                f"AKShare 未找到 {len(remaining)} 只股票的基本面数据（已尝试回退至 {quarters[-1]})"
+            )
+
+        return results
+
+    except ImportError:
+        logger.debug("AKShare 未安装，跳过")
+        return {}
+    except Exception as e:
+        logger.warning(f"AKShare 批量获取基本面数据失败: {e}")
+        return {}
+
+
+def _extract_akshare_row(row: Any) -> dict[str, Any]:
+    """从 AKShare stock_yjbb_em 返回的行数据中提取财务指标。
+
+    将 AKShare 的列名映射为 BaoStock 兼容的键名，并标准化数值单位。
+    - 净资产收益率：AKShare 返回百分比（如 3.2 表示 3.2%），转为小数（0.032）
+    - 增长率指标：AKShare 已是百分比，直接透传
+    - 资产负债率：yjbb 接口不包含此字段，设为 None
+    - 数值为 NaN/None/非数字时，跳过该字段
+
+    Args:
+        row: pandas Series，stock_yjbb_em 返回的一行数据。
+
+    Returns:
+        标准化后的字典，键名与 BaoStock _fetch_single_with_session 兼容。
+    """
+    result: dict[str, Any] = {}
+
+    def _safe_float(val: Any) -> float | None:
+        """安全转换值为 float，NaN/None/非数字返回 None。"""
+        if val is None:
+            return None
+        try:
+            f = float(val)
+            if math.isnan(f):
+                return None
+            return f
+        except (ValueError, TypeError):
+            return None
+
+    # ── 净资产收益率 → roeAvg（小数格式，与 BaoStock 兼容）──
+    roe = _safe_float(row.get("净资产收益率"))
+    if roe is not None:
+        # AKShare 返回百分比（如 3.2 = 3.2%），转为小数（0.032）
+        result["roeAvg"] = roe / 100.0
+
+    # ── 每股收益 → epsTTM ──
+    eps = _safe_float(row.get("每股收益"))
+    if eps is not None:
+        result["epsTTM"] = eps
+
+    # ── 净利润同比增长率（已是百分比）──
+    pg = _safe_float(row.get("净利润-同比增长"))
+    if pg is not None:
+        result["profit_growth"] = pg
+
+    # ── 营收同比增长率（已是百分比）──
+    rg = _safe_float(row.get("营业总收入-同比增长"))
+    if rg is not None:
+        result["revenue_growth"] = rg
+
+    # ── 资产负债率（yjbb 接口无此字段，不设置，由下游 .get() 返回 None）──
+
+    # ── 销售毛利率（已是百分比）──
+    gm = _safe_float(row.get("销售毛利率"))
+    if gm is not None:
+        result["gross_margin"] = gm
+
+    # ── 每股经营现金流（元）──
+    cf = _safe_float(row.get("每股经营现金流量"))
+    if cf is not None:
+        result["cash_flow"] = cf
+
+    return result
+
+
+def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
+    """批量获取多只股票的基本面数据（AKShare 优先，BaoStock 回退）。
+
+    优先级：AKShare（HTTP，CI 环境稳定）→ BaoStock（TCP，需登录）。
+    对每只股票：先调 AKShare，如果返回非空数据则直接用，
+    否则 fallback 到 BaoStock。
 
     Args:
         codes: 股票代码列表。
@@ -227,6 +393,34 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
     """
     if not codes:
         return {}
+
+    results: dict[str, FundamentalData] = {}
+    need_baostock: list[str] = []
+
+    # ── 第一轮：AKShare（HTTP，无需登录，CI 友好）──
+    logger.info(f"开始使用 AKShare 获取 {len(codes)} 只股票基本面数据...")
+    akshare_data = _fetch_fundamental_akshare_batch(codes)
+    akshare_success = 0
+
+    for code in codes:
+        data = akshare_data.get(code, {})
+        # 非空字典即表示 AKShare 找到了该股票的财务数据（含负盈利情况）
+        if data:
+            results[code] = _dict_to_fundamental_data(data)
+            akshare_success += 1
+        else:
+            need_baostock.append(code)
+
+    logger.info(
+        f"AKShare 获取完成: {akshare_success}/{len(codes)} 只成功，"
+        f"{len(need_baostock)} 只需回退到 BaoStock"
+    )
+
+    # ── 第二轮：BaoStock 回退（保留原有重连逻辑）──
+    if not need_baostock:
+        success = sum(1 for v in results.values() if v.roe > 0 or v.eps > 0)
+        logger.info(f"基本面数据获取完成: {success}/{len(codes)} 只有效")
+        return results
 
     from datetime import datetime
 
@@ -244,11 +438,13 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
             bs.logout()
 
     if not _login():
-        return {code: _empty_fundamental_data() for code in codes}
+        logger.warning("BaoStock 登录失败，AKShare 未覆盖的股票将使用空数据")
+        for code in need_baostock:
+            results[code] = _empty_fundamental_data()
+        return results
 
     current_year = datetime.now().year
     current_quarter = (datetime.now().month - 1) // 3 + 1
-    results: dict[str, FundamentalData] = {}
 
     consecutive_api_errors = 0  # 仅计数 API 层错误（连接断开等）
     max_consecutive_api_errors = 10  # 连续 API 错误阈值
@@ -256,19 +452,19 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
     max_reconnects = 3
     no_data_count = 0  # 统计无财报数据的股票数
 
-    for code in codes:
+    for code in need_baostock:
         api_error = False
-        data: dict = {}
+        bs_data: dict[str, Any] = {}
         try:
-            data = _fetch_single_with_session(bs, code, current_year, current_quarter)
-            if not data:
+            bs_data = _fetch_single_with_session(bs, code, current_year, current_quarter)
+            if not bs_data:
                 no_data_count += 1
         except Exception as e:
             api_error = True
             logger.warning(f"获取 {code} 基本面数据异常: {e}")
 
-        if data:
-            results[code] = _dict_to_fundamental_data(data)
+        if bs_data:
+            results[code] = _dict_to_fundamental_data(bs_data)
             consecutive_api_errors = 0  # 有数据回来，重置 API 错误计数
         else:
             results[code] = _empty_fundamental_data()
@@ -284,8 +480,9 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
                     f"基本面 API 连续 {consecutive_api_errors} 次错误，"
                     f"已重连 {total_reconnects - 1} 次仍不稳定，放弃剩余股票"
                 )
-                for remaining in codes[len(results):]:
-                    results[remaining] = _empty_fundamental_data()
+                for remaining in need_baostock[len(results) - akshare_success:]:
+                    if remaining not in results:
+                        results[remaining] = _empty_fundamental_data()
                 break
 
             logger.warning(
@@ -300,8 +497,9 @@ def get_fundamental_data_batch(codes: list[str]) -> dict[str, FundamentalData]:
                 consecutive_api_errors = 0
             else:
                 logger.error("基本面重连失败，跳过剩余股票")
-                for remaining in codes[len(results):]:
-                    results[remaining] = _empty_fundamental_data()
+                for remaining in need_baostock:
+                    if remaining not in results:
+                        results[remaining] = _empty_fundamental_data()
                 break
 
     _logout()

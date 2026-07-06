@@ -61,8 +61,15 @@ def _fetch_etf_fund_daily(code: str, timeout: int = 30) -> pd.DataFrame:
 
     def _fetch_akshare() -> pd.DataFrame:
         import akshare as ak  # type: ignore[import-untyped]
-        # fund_etf_fund_daily_em() 无参数，返回所有ETF数据
-        all_etfs = ak.fund_etf_fund_daily_em()
+        # fund_etf_fund_daily_em() 无参数，返回所有ETF的份额及净值数据
+        try:
+            all_etfs = ak.fund_etf_fund_daily_em()
+        except TypeError as e:
+            logger.warning(
+                "AKShare fund_etf_fund_daily_em() API 签名已变更，"
+                "当前版本可能不支持无参数调用: %s", e
+            )
+            raise
         # 按代码筛选
         if all_etfs.empty:
             return all_etfs
@@ -240,33 +247,64 @@ def get_etf_fund_flow(code: str, days: int = 5) -> float:
             logger.warning(f"ETF {code} 份额数据为空")
             return 3.0
 
-        # 重命名列
+        # 第一步：精确列名重命名（覆盖 AKShare 常见列名变体）
         column_mapping = {
             "份额变化": "share_change",
+            "份额变化(万份)": "share_change",
+            "变动份额": "share_change",
             "日份额变化": "share_change",
-            "涨跌额": "share_change",  # AKShare 新格式
+            "份额变动": "share_change",
+            "日增长值": "share_change",
             "日增长": "share_change",
+            "涨跌额": "share_change",
+            "日申购赎回份额": "share_change",
         }
         existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
         df = df.rename(columns=existing_columns)
 
-        # 获取份额变化列
+        # 获取份额变化列（三步递进：精确匹配 → 关键字推断 → 数值列兜底）
         if "share_change" not in df.columns:
-            # 尝试用数值列的最后一列作为份额变化代理
-            numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-            if not numeric_cols:
-                # AKShare 可能返回文本列，尝试强制转换
-                for col in df.columns:
-                    try:
-                        df[col] = pd.to_numeric(df[col], errors='raise')
-                    except (ValueError, TypeError):
-                        continue
+            share_col: str | None = None
+
+            # 第二步：关键字自动推断 — 在列名中搜索"份额"、"变化"、"变动"
+            keywords = ["份额", "变化", "变动"]
+            for col in df.columns:
+                col_str = str(col)
+                if any(kw in col_str for kw in keywords):
+                    share_col = col
+                    logger.info(
+                        "ETF %s 通过关键字匹配找到份额变化列: '%s'", code, share_col
+                    )
+                    break
+
+            # 第三步：兜底 — 使用最后一个数值列（跳过基金代码列）
+            if share_col is None:
                 numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-            if numeric_cols:
-                logger.info(f"ETF {code} 使用数值列 '{numeric_cols[-1]}' 作为份额变化代理")
-                df["share_change"] = df[numeric_cols[-1]]
+                if not numeric_cols:
+                    # AKShare 可能返回文本列，尝试强制转换
+                    # 跳过第一列（通常是基金代码），避免误判
+                    for col in df.columns[1:]:
+                        try:
+                            df[col] = pd.to_numeric(df[col], errors="raise")
+                        except (ValueError, TypeError):
+                            continue
+                    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+
+                if numeric_cols:
+                    # 跳过第一列（通常是基金代码），从剩余列中选最后一个
+                    candidate_cols = [
+                        c for c in numeric_cols if c != df.columns[0]
+                    ]
+                    if candidate_cols:
+                        share_col = candidate_cols[-1]
+                        logger.info(
+                            "ETF %s 使用数值列 '%s' 作为份额变化代理", code, share_col
+                        )
+
+            if share_col is not None:
+                df["share_change"] = df[share_col]
             else:
-                logger.warning(f"ETF {code} 份额数据无可用数值列，使用默认持平评分")
+                logger.warning("ETF %s 份额数据无可用数值列，使用默认持平评分", code)
                 return 3.0
 
         # 取最近 days 天的数据

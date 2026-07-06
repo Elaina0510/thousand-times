@@ -29,6 +29,7 @@ class TechnicalSignals:
     volume_down: bool = False  # 放量下跌
     volume_peak: bool = False  # 天量见天价
     pullback_ok: bool = False  # 缩量回调到位
+    ma60_data_days: int = 60  # MA60有效数据天数（<60时金叉/多头排列权重减半）
 
 
 @dataclass
@@ -340,25 +341,34 @@ def get_industry_trend_score(
     return config.industry_trend_weight.sideways
 
 
-def calc_technical_score(signals: TechnicalSignals, weights: TechnicalWeightConfig) -> float:
+def calc_technical_score(
+    signals: TechnicalSignals,
+    weights: TechnicalWeightConfig,
+    kline: object | None = None,
+) -> float:
     """根据技术信号和权重计算技术指标评分。
 
     Args:
         signals: 技术信号汇总。
         weights: 技术指标权重配置。
+        kline: K线数据（可选，需有 closes 属性，用于计算基线分）。
 
     Returns:
         评分（0~40分，负分截断到0）。
     """
     score = 0.0
 
+    # MA60 数据不足时，相关信号权重减半
+    ma60_days = getattr(signals, 'ma60_data_days', 60)
+    ma60_penalty = 0.5 if ma60_days < 60 else 1.0
+
     # 加分项
     if signals.ma5_10_golden:
         score += weights.ma_golden_cross
     if signals.ma20_60_golden:
-        score += weights.ma20_60_golden_cross
+        score += weights.ma20_60_golden_cross * ma60_penalty
     if signals.bullish_alignment:
-        score += weights.bullish_alignment
+        score += weights.bullish_alignment * ma60_penalty
     if signals.above_ma20:
         score += weights.above_ma20
     if signals.macd_golden:
@@ -381,6 +391,19 @@ def calc_technical_score(signals: TechnicalSignals, weights: TechnicalWeightConf
         score -= weights.volume_peak
     if signals.volume_down:
         score -= weights.volume_drop
+
+    # 基线分：近期涨跌幅（有K线数据时）
+    if kline is not None and hasattr(kline, 'closes'):
+        closes_list: list[float] = getattr(kline, 'closes', [])
+        if len(closes_list) >= 5:
+            change_5d = (closes_list[-1] - closes_list[-5]) / closes_list[-5] * 100 if closes_list[-5] > 0 else 0
+            change_20d = 0.0
+            if len(closes_list) >= 20 and closes_list[-20] > 0:
+                change_20d = (closes_list[-1] - closes_list[-20]) / closes_list[-20] * 100
+            if change_5d > 0:
+                score += 5.0
+            if change_20d > 0:
+                score += 3.0
 
     # 截断到 0
     return max(0.0, score)

@@ -8,6 +8,8 @@ import sys
 from datetime import datetime
 from typing import Any
 
+import numpy as np
+
 from dotenv import load_dotenv
 
 # 加载 .env 文件
@@ -26,7 +28,7 @@ except ImportError:
     logger_bootstrap = logging.getLogger("thousand-times")
     logger_bootstrap.warning("BaoStock 不可用，将降级到 Ashare/AKShare 数据源")
 
-from buy_sell_signal import BuySellSignal, generate_buy_sell_signal
+from buy_sell_signal import BuySellSignal, apply_percentile_override, generate_buy_sell_signal
 from cache_manager import (
     FUND_CACHE_TTL,
     get_cached_data,
@@ -34,7 +36,7 @@ from cache_manager import (
     load_cached_dataframe,
     clear_expired_cache,
     load_previous_kline_cache,
-    needs_kline_update,
+    get_kline_update_start,
     save_kline_cache_with_meta,
     load_kline_cache_with_meta,
     log_cache_stats,
@@ -67,6 +69,35 @@ logging.basicConfig(
 logger = logging.getLogger("thousand-times")
 
 
+def _fetch_kline_akshare(code: str, days: int = 120) -> pd.DataFrame:
+    """使用 AKShare 获取个股历史K线。
+
+    Args:
+        code: 股票代码（如 '600000'）。
+        days: 回溯天数。
+
+    Returns:
+        K线 DataFrame（列名与其他源一致），失败返回空 DataFrame。
+    """
+    try:
+        import akshare as ak  # type: ignore[import-untyped]
+        from datetime import datetime, timedelta
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        df = ak.stock_zh_a_hist(symbol=code, period="daily",
+                                start_date=start_date, end_date=end_date, adjust="qfq")
+        if df is not None and not df.empty:
+            # 重命名为与其他源一致的列名
+            df = df.rename(columns={
+                "日期": "日期", "开盘": "开盘", "收盘": "收盘",
+                "最高": "最高", "最低": "最低", "成交量": "成交量",
+            })
+            return df
+    except Exception as e:
+        logger.debug(f"AKShare 获取 {code} K线失败: {e}")
+    return pd.DataFrame()
+
+
 def parallel_batch_fetch(
     codes: list[str],
     fetch_func,
@@ -89,6 +120,11 @@ def parallel_batch_fetch(
     """
     if not codes:
         return {}
+
+    # CI 环境自动增大线程池以加速数据获取
+    is_ci = os.environ.get("CI", "false").lower() == "true"
+    if is_ci and workers <= 4:
+        workers = 8
 
     chunk_size = max(1, (len(codes) + workers - 1) // workers)  # 向上取整
     chunks = [codes[i:i + chunk_size] for i in range(0, len(codes), chunk_size)]
@@ -138,7 +174,7 @@ def analyze_single_stock(
 
     # 技术指标
     signals = calc_technical_signals(kline)
-    tech_score = calc_technical_score(signals, config.technical_weight)
+    tech_score = calc_technical_score(signals, config.technical_weight, kline=kline)
 
     # 基本面（优先使用缓存）
     if fund_cache is not None and code in fund_cache:
@@ -226,7 +262,7 @@ def analyze_single_etf(
 
     # 技术指标
     signals = calc_technical_signals(kline)
-    tech_score = calc_technical_score(signals, config.technical_weight)
+    tech_score = calc_technical_score(signals, config.technical_weight, kline=kline)
 
     # 政策新闻（ETF关联板块）
     from news_analysis import get_industry_impact_score
@@ -335,6 +371,36 @@ def _run_v2_pipeline(config: object, is_ci: bool = False) -> None:
             return
         raise
 
+    # ===== 评分分布诊断（V2 管道） =====
+    if scores:
+        score_arr = np.array([s.total for s in scores])
+        logger.info("=" * 40)
+        logger.info("评分分布诊断（V2 管道）")
+        logger.info(f"  样本数: {len(score_arr)}")
+        logger.info(f"  范围: [{score_arr.min():.1f}, {score_arr.max():.1f}]")
+        logger.info(f"  均值: {score_arr.mean():.1f}  标准差: {score_arr.std():.1f}")
+        for p in [5, 25, 50, 75, 95]:
+            logger.info(f"  {p}th 分位: {np.percentile(score_arr, p):.1f}")
+
+        # 分档统计（基于 FactorScores.total）
+        v2_buy = sum(1 for s in scores if s.total >= 70)
+        v2_watch = sum(1 for s in scores if 30 <= s.total < 70)
+        v2_sell = sum(1 for s in scores if s.total < 30)
+        logger.info(f"  买入区(>=70): {v2_buy}, 观望区(30-69): {v2_watch}, 卖出区(<30): {v2_sell}")
+
+        # 信号动作统计
+        buy_signals = sum(1 for s in signals if s.action == "buy")
+        sell_signals = sum(1 for s in signals if s.action == "sell")
+        hold_signals = sum(1 for s in signals if s.action == "hold")
+        logger.info(f"  信号买入: {buy_signals}, 信号卖出: {sell_signals}, 信号观望: {hold_signals}")
+        logger.info("=" * 40)
+
+    tech_list = [s.technical for s in scores if hasattr(s, 'technical')]
+    if tech_list:
+        t_arr = np.array(tech_list)
+        logger.info(f"技术评分分布（V2 管道）: min={t_arr.min():.1f} max={t_arr.max():.1f} mean={t_arr.mean():.1f}")
+    # ===== 评分分布诊断结束 =====
+
     # 阶段5: 输出报告
     try:
         report = stage_output(signals, regime, data, config)
@@ -367,6 +433,11 @@ def main() -> None:
     logger.info(f"  股票池大小: {config.filter.pool_size}")
     logger.info(f"  请求延迟: {config.request_delay_range[0]}-{config.request_delay_range[1]}秒")
     logger.info(f"  回溯天数: {config.lookback_days}")
+
+    # CI 环境：削减请求延迟（CI 不需要反爬虫保护）
+    if is_ci:
+        config.request_delay_range = (0.1, 0.3)
+        logger.info(f"  CI 延迟已覆盖: {config.request_delay_range[0]}-{config.request_delay_range[1]}秒")
 
     # V2 管道分支
     if getattr(config, "use_v2_pipeline", False):
@@ -471,20 +542,50 @@ def main() -> None:
 
         stock_codes = [str(stock["code"]) for _, stock in stock_pool.iterrows()]
 
-        # K线数据获取函数（根据 BaoStock 可用性选择数据源）
+        # K线数据获取函数（优先 AKShare → BaoStock → Ashare）
         if BAOSTOCK_AVAILABLE:
-            from baostock_data import get_stock_hist_batch_baostock as _fetch_kline_batch
+            from baostock_data import get_stock_hist_batch_baostock as _fetch_kline_baostock
+
+            def _fetch_kline_batch(codes: list[str], days: int = 60) -> dict[str, pd.DataFrame]:
+                """优先 AKShare 逐只获取 → 失败回退 BaoStock。"""
+                result: dict[str, pd.DataFrame] = {}
+                failed_codes: list[str] = []
+                for code in codes:
+                    df = _fetch_kline_akshare(code, days)
+                    if not df.empty:
+                        result[code] = df
+                    else:
+                        failed_codes.append(code)
+
+                if failed_codes:
+                    logger.info(
+                        f"AKShare 获取 {len(codes) - len(failed_codes)}/{len(codes)} 只成功，"
+                        f"回退 {len(failed_codes)} 只到 BaoStock"
+                    )
+                    try:
+                        baostock_result = _fetch_kline_baostock(failed_codes, days)
+                        result.update(baostock_result)
+                    except Exception as e:
+                        logger.warning(f"BaoStock 回退失败: {e}")
+                        for code in failed_codes:
+                            result[code] = pd.DataFrame()
+
+                return result
         else:
             from technical_analysis import _fetch_stock_hist_ashare
 
             def _fetch_kline_batch(codes: list[str], days: int = 60) -> dict[str, pd.DataFrame]:
-                """降级方案：逐只获取 K 线数据。"""
+                """降级方案：先 AKShare 后 Ashare 逐只获取 K 线数据。"""
                 result: dict[str, pd.DataFrame] = {}
                 for code in codes:
-                    try:
-                        result[code] = _fetch_stock_hist_ashare(code, days)
-                    except Exception:
-                        result[code] = pd.DataFrame()
+                    df = _fetch_kline_akshare(code, days)
+                    if not df.empty:
+                        result[code] = df
+                    else:
+                        try:
+                            result[code] = _fetch_stock_hist_ashare(code, days)
+                        except Exception:
+                            result[code] = pd.DataFrame()
                 return result
 
         # K线数据：增量缓存策略
@@ -516,16 +617,23 @@ def main() -> None:
             prev_cache = load_previous_kline_cache(report_date)
             if prev_cache is not None:
                 # 找出需要更新的股票（新股票 或 数据不够新）
-                codes_to_update = [
-                    c for c in stock_codes
-                    if c not in prev_cache or needs_kline_update(prev_cache[c], report_date)
-                ]
+                # 使用 get_kline_update_start 获取增量起始日期
+                codes_to_update: list[str] = []
+                for c in stock_codes:
+                    if c not in prev_cache:
+                        codes_to_update.append(c)
+                    else:
+                        update_start = get_kline_update_start(prev_cache[c], report_date)
+                        if update_start is not None:
+                            codes_to_update.append(c)
+
                 if codes_to_update:
                     logger.info(
                         f"增量更新K线：复用 {len(prev_cache) - len(codes_to_update)} 只，"
                         f"需获取 {len(codes_to_update)} 只"
                     )
                     new_data = _fetch_kline_batch(codes_to_update, days=config.lookback_days)
+                    # 增量合并：新数据覆盖旧缓存中的对应股票
                     kline_cache = {**prev_cache, **new_data}
                 else:
                     logger.info(f"前序K线缓存完全可用，共 {len(prev_cache)} 只，无需更新")
@@ -728,6 +836,99 @@ def main() -> None:
 
     logger.info(f"买卖信号生成完成：个股 {len(stock_signals)} 只，ETF {len(etf_signals)} 只")
 
+    # 百分位相对排名覆盖：即使绝对分数未达阈值，排名靠前/靠后的也标记信号
+    if stock_signals and len(stock_signals) >= 5:
+        all_stock_total_scores = [s.total_score for s in stock_signals]
+        overridden_buy = 0
+        overridden_sell = 0
+        for sig in stock_signals:
+            old_zone = sig.signal_zone
+            new_zone, new_emoji = apply_percentile_override(
+                sig.code, float(sig.signal_score), all_stock_total_scores,
+                config.buy_sell_signal,
+            )
+            if new_zone != old_zone:
+                if "买入" in new_zone:
+                    overridden_buy += 1
+                elif "风险" in new_zone:
+                    overridden_sell += 1
+                sig.signal_zone = new_zone
+                sig.signal_emoji = new_emoji
+        if overridden_buy or overridden_sell:
+            logger.info(
+                f"百分位覆盖：{overridden_buy} 只升级为买入关注，"
+                f"{overridden_sell} 只降级为风险警示"
+            )
+    if etf_signals and len(etf_signals) >= 5:
+        all_etf_total_scores = [s.total_score for s in etf_signals]
+        for sig in etf_signals:
+            new_zone, new_emoji = apply_percentile_override(
+                sig.code, float(sig.signal_score), all_etf_total_scores,
+                config.buy_sell_signal,
+            )
+            sig.signal_zone = new_zone
+            sig.signal_emoji = new_emoji
+
+    # 记录买卖信号到跟踪数据库
+    try:
+        from signal_tracker import record_signals
+
+        signal_records: list[dict] = []
+        for sig in stock_signals + etf_signals:
+            action = 'buy' if '买入' in sig.signal_zone else ('sell' if '风险' in sig.signal_zone else 'hold')
+            price = 0.0
+            # 从 K 线缓存获取最新收盘价
+            try:
+                if sig.code in kline_cache:
+                    df = kline_cache[sig.code]
+                    if not df.empty and '收盘' in df.columns:
+                        price = float(df['收盘'].iloc[-1])
+                elif sig.code in etf_kline_cache:
+                    df = etf_kline_cache[sig.code]
+                    if not df.empty and '收盘' in df.columns:
+                        price = float(df['收盘'].iloc[-1])
+            except Exception:
+                pass
+            signal_records.append({
+                'date': report_date,
+                'code': sig.code,
+                'name': sig.name,
+                'action': action,
+                'score': float(sig.signal_score),
+                'price': price,
+            })
+        record_signals(signal_records)
+    except Exception as e:
+        logger.warning(f'信号记录失败: {e}')
+
+    # ===== 评分分布诊断（V1 管道） =====
+    stock_scores = [s.total_score for s in stock_results]
+    etf_scores = [s.total_score for s in etf_results]
+    all_scores = stock_scores + etf_scores
+
+    if all_scores:
+        arr = np.array(all_scores)
+        logger.info("=" * 40)
+        logger.info("评分分布诊断（V1 管道）")
+        logger.info(f"  样本数: {len(arr)}")
+        logger.info(f"  范围: [{arr.min():.1f}, {arr.max():.1f}]")
+        logger.info(f"  均值: {arr.mean():.1f}  标准差: {arr.std():.1f}")
+        for p in [5, 25, 50, 75, 95]:
+            logger.info(f"  {p}th 分位: {np.percentile(arr, p):.1f}")
+
+        # 分档统计
+        buy_count = sum(1 for s in all_scores if s >= 70)
+        watch_count = sum(1 for s in all_scores if 30 <= s < 70)
+        sell_count = sum(1 for s in all_scores if s < 30)
+        logger.info(f"  买入区(>=70): {buy_count}, 观望区(30-69): {watch_count}, 卖出区(<30): {sell_count}")
+        logger.info("=" * 40)
+
+    tech_scores = [s.technical_score for s in stock_results if hasattr(s, 'technical_score')]
+    if tech_scores:
+        t_arr = np.array(tech_scores)
+        logger.info(f"技术评分分布（V1 管道）: min={t_arr.min():.1f} max={t_arr.max():.1f} mean={t_arr.mean():.1f}")
+    # ===== 评分分布诊断结束 =====
+
     # 8. 生成图表（复用缓存 + 并行生成）
     logger.info("开始生成图表...")
     os.makedirs("charts", exist_ok=True)
@@ -762,12 +963,29 @@ def main() -> None:
 
     # 9. 生成报告
     logger.info("开始生成报告...")
+
+    # 构建 ETF 涨跌幅映射
+    etf_changes: dict[str, float] = {}
+    for etf in etf_pool:
+        if hasattr(etf, 'change_pct') and etf.change_pct is not None:
+            etf_changes[etf.code] = float(etf.change_pct)
+
+    # 构建市场概况描述
+    regime_desc = None
+    try:
+        regime_desc = market_regime.description  # type: ignore[union-attr]
+    except Exception:
+        pass
+
     report = generate_report(
         stock_results, etf_results, policy_impacts, report_date,
         stock_signals=stock_signals,
         etf_signals=etf_signals,
         score_threshold_high=config.buy_sell_signal.buy_threshold,
         score_threshold_low=config.buy_sell_signal.sell_threshold,
+        market_regime=regime_desc,
+        stock_changes=stock_change_pcts if stock_change_pcts else None,
+        etf_changes=etf_changes if etf_changes else None,
     )
 
     # 9.1 生成HTML报告（包含图表）

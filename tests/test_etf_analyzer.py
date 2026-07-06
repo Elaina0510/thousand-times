@@ -136,6 +136,49 @@ class TestGetEtfFundFlow:
         assert score == 3.0
 
     @patch("etf_analyzer._fetch_etf_fund_daily")
+    def test_keyword_match_column(self, mock_fetch: MagicMock) -> None:
+        """通过关键字匹配找到份额变化列（如 AKShare 返回 '份额变化(万份)'）。"""
+        mock_fetch.return_value = pd.DataFrame({
+            "基金代码": ["512480"] * 5,
+            "日期": pd.date_range("2026-01-01", periods=5, freq="B"),
+            "份额变化(万份)": [100, 200, 150, 300, 250],
+        })
+        score = get_etf_fund_flow("512480", days=5)
+        assert 0 <= score <= 10
+
+    @patch("etf_analyzer._fetch_etf_fund_daily")
+    def test_variant_keyword_column(self, mock_fetch: MagicMock) -> None:
+        """通过关键字匹配找到变动份额列。"""
+        mock_fetch.return_value = pd.DataFrame({
+            "基金代码": ["512480"] * 5,
+            "日期": pd.date_range("2026-01-01", periods=5, freq="B"),
+            "变动份额(万份)": [100, 200, 150, 300, 250],
+        })
+        score = get_etf_fund_flow("512480", days=5)
+        assert 0 <= score <= 10
+
+    @patch("etf_analyzer._fetch_etf_fund_daily")
+    def test_numeric_fallback_column(self, mock_fetch: MagicMock) -> None:
+        """无关键字匹配时回退到最后一个数值列。"""
+        mock_fetch.return_value = pd.DataFrame({
+            "基金代码": ["512480"] * 5,
+            "净值": [1.5, 1.6, 1.7, 1.8, 1.9],
+            "未知列": [100, -200, 150, -300, 250],
+        })
+        score = get_etf_fund_flow("512480", days=5)
+        assert 0 <= score <= 10
+
+    @patch("etf_analyzer._fetch_etf_fund_daily")
+    def test_no_numeric_columns(self, mock_fetch: MagicMock) -> None:
+        """无可用数值列时返回默认持平评分。"""
+        mock_fetch.return_value = pd.DataFrame({
+            "基金代码": ["512480"] * 5,
+            "状态": ["申购", "赎回", "申购", "赎回", "申购"],
+        })
+        score = get_etf_fund_flow("512480", days=5)
+        assert score == 3.0
+
+    @patch("etf_analyzer._fetch_etf_fund_daily")
     def test_api_failure(self, mock_fetch: MagicMock) -> None:
         """API失败返回默认持平。"""
         mock_fetch.side_effect = Exception("API 超时")

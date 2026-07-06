@@ -140,6 +140,46 @@ def determine_signal_zone(
         return "卖出区", "🔴"
 
 
+def apply_percentile_override(
+    code: str,
+    total_score: float,
+    all_scores: list[float],
+    config: BuySellSignalConfig,
+    top_pct: float = 0.20,
+    bottom_pct: float = 0.20,
+) -> tuple[str, str]:
+    """百分位相对排名覆盖。
+
+    即使绝对分数未达阈值，如果排名在股票池前 top_pct，也标记为买入关注；
+    即使绝对分数未低到卖出阈值，如果排名在后 bottom_pct，也标记为风险警示。
+
+    Args:
+        code: 股票代码
+        total_score: 绝对评分
+        all_scores: 股票池中所有股票的评分列表
+        config: 买卖信号配置
+        top_pct: 头部比例（默认 20%）
+        bottom_pct: 尾部比例（默认 20%）
+
+    Returns:
+        (signal_zone, signal_emoji) 元组
+    """
+    if not all_scores or len(all_scores) < 5:
+        # 股票太少，直接用绝对阈值
+        return determine_signal_zone(total_score, config)
+
+    sorted_scores = sorted(all_scores, reverse=True)
+    top_threshold = sorted_scores[max(0, int(len(sorted_scores) * top_pct) - 1)]
+    bottom_threshold = sorted_scores[min(len(sorted_scores) - 1, int(len(sorted_scores) * (1 - bottom_pct)))]
+
+    if total_score >= top_threshold and total_score >= config.buy_threshold * 0.7:
+        return ("买入关注", "🟢")
+    elif total_score <= bottom_threshold and total_score <= config.sell_threshold * 1.5:
+        return ("风险警示", "🔴")
+    else:
+        return determine_signal_zone(total_score, config)
+
+
 def generate_buy_sell_signal(
     code: str,
     name: str,

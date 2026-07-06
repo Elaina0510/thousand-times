@@ -17,7 +17,8 @@ logger = logging.getLogger("thousand-times")
 
 CACHE_DIR = "cache"
 CACHE_TTL = 86400  # 24小时（秒）
-FUND_CACHE_TTL = 86400 * 30  # 基本面数据缓存30天（季度数据变化慢）
+# 季报数据每季度更新一次，90天TTL确保同一季度内复用缓存
+FUND_CACHE_TTL = 7776000  # 90天（秒）
 
 # 缓存统计计数器
 _cache_stats = {"hit": 0, "miss": 0}
@@ -242,6 +243,30 @@ def needs_kline_update(df: pd.DataFrame, today: str) -> bool:
         return True
     # 比较日期（只取日期部分，忽略时间）
     return latest[:10] != today
+
+
+def get_kline_update_start(df: pd.DataFrame, report_date: str) -> str | None:
+    """返回增量更新的起始日期。如果不需要更新返回 None。
+
+    用于增量更新策略：从「最后缓存日期」到「今天」拉取增量 K 线，
+    与已有缓存拼接，避免全量重拉。
+
+    Args:
+        df: 已缓存的 K 线 DataFrame。
+        report_date: 报告日期（今日），如 '2026-07-06'。
+
+    Returns:
+        增量起始日期字符串，或 None 表示无需更新。
+    """
+    if df is None or df.empty:
+        return None
+    date_col = "日期" if "日期" in df.columns else "date"
+    if date_col not in df.columns:
+        return None
+    last_date = str(df[date_col].iloc[-1])[:10]
+    if last_date >= report_date:
+        return None  # 已是最新
+    return last_date  # 从这个日期开始拉增量
 
 
 def save_kline_cache_with_meta(

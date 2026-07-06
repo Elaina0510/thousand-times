@@ -258,11 +258,11 @@ def _df_to_kline_data(df: pd.DataFrame, code: str, days: int = 60) -> KlineData:
     highs = df["high"].astype(float)
     lows = df["low"].astype(float)
 
-    # MA — MA60 使用 min_periods=60，数据不足时返回 NaN
+    # MA — MA60 使用 min_periods=min(60, len)，新股不会全NaN
     ma5 = _calc_ma(closes, 5, min_periods=1)
     ma10 = _calc_ma(closes, 10, min_periods=1)
     ma20 = _calc_ma(closes, 20, min_periods=1)
-    ma60 = _calc_ma(closes, 60, min_periods=60)
+    ma60 = _calc_ma(closes, 60, min_periods=min(60, len(closes)))
 
     # MACD
     dif, dea, macd_hist = _calc_macd(closes)
@@ -337,6 +337,9 @@ def calc_technical_signals(kline: KlineData) -> TechnicalSignals:
     volumes = np.array(kline.volumes)
 
     signals = TechnicalSignals()
+
+    # 记录 MA60 有效数据天数
+    signals.ma60_data_days = int(np.sum(~np.isnan(ma60)))
 
     # ── MA5/10 金叉/死叉（近3日，冲突时取最后发生的） ──
     last_ma_cross = None  # "golden" or "death"
@@ -436,25 +439,34 @@ def calc_technical_signals(kline: KlineData) -> TechnicalSignals:
     return signals
 
 
-def calc_technical_score(signals: TechnicalSignals, weights: TechnicalWeightConfig) -> float:
+def calc_technical_score(
+    signals: TechnicalSignals,
+    weights: TechnicalWeightConfig,
+    kline: KlineData | None = None,
+) -> float:
     """根据技术信号和权重计算技术指标评分。
 
     Args:
         signals: 技术信号汇总。
         weights: 技术指标权重配置。
+        kline: K线数据（可选，用于计算基线分）。
 
     Returns:
         评分（0~40分，负分截断到0）。
     """
     score = 0.0
 
+    # MA60 数据不足时，相关信号权重减半
+    ma60_days = getattr(signals, 'ma60_data_days', 60)
+    ma60_penalty = 0.5 if ma60_days < 60 else 1.0
+
     # 加分项
     if signals.ma5_10_golden:
         score += weights.ma_golden_cross
     if signals.ma20_60_golden:
-        score += weights.ma20_60_golden_cross
+        score += weights.ma20_60_golden_cross * ma60_penalty
     if signals.bullish_alignment:
-        score += weights.bullish_alignment
+        score += weights.bullish_alignment * ma60_penalty
     if signals.above_ma20:
         score += weights.above_ma20
     if signals.macd_golden:
@@ -477,6 +489,18 @@ def calc_technical_score(signals: TechnicalSignals, weights: TechnicalWeightConf
         score -= weights.volume_peak
     if signals.volume_down:
         score -= weights.volume_drop
+
+    # 基线分：近期涨跌幅（有K线数据时）
+    if kline is not None and len(kline.closes) >= 5:
+        closes_arr = np.array(kline.closes)
+        change_5d = (closes_arr[-1] - closes_arr[-5]) / closes_arr[-5] * 100 if closes_arr[-5] > 0 else 0
+        change_20d = 0.0
+        if len(closes_arr) >= 20 and closes_arr[-20] > 0:
+            change_20d = (closes_arr[-1] - closes_arr[-20]) / closes_arr[-20] * 100
+        if change_5d > 0:
+            score += 5.0
+        if change_20d > 0:
+            score += 3.0
 
     # 截断到 0
     return max(0.0, score)
