@@ -365,6 +365,33 @@ def _run_v2_pipeline(config: object, is_ci: bool = False) -> None:
         buy_count = sum(1 for s in signals if s.action == "buy")
         sell_count = sum(1 for s in signals if s.action == "sell")
         logger.info(f"信号生成完成: 买入 {buy_count}, 卖出 {sell_count}")
+
+        # 百分位相对排名覆盖（V2 管道）
+        if signals and len(signals) >= 5:
+            all_total_scores = [s.total for s in scores]
+            overridden_buy = 0
+            overridden_sell = 0
+            for sig in signals:
+                sig_total = sig.factor_scores.total if sig.factor_scores else 50.0
+                new_zone, new_emoji = apply_percentile_override(
+                    sig.code, sig_total, all_total_scores,
+                    config.buy_sell_signal,
+                )
+                if "买入" in new_zone and sig.action != "buy":
+                    overridden_buy += 1
+                    sig.action = "buy"
+                elif "风险" in new_zone and sig.action != "sell":
+                    overridden_sell += 1
+                    sig.action = "sell"
+            if overridden_buy or overridden_sell:
+                logger.info(
+                    f"百分位覆盖（V2）：{overridden_buy} 只升级为买入，"
+                    f"{overridden_sell} 只降级为卖出"
+                )
+            # 更新计数
+            buy_count = sum(1 for s in signals if s.action == "buy")
+            sell_count = sum(1 for s in signals if s.action == "sell")
+            logger.info(f"覆盖后信号: 买入 {buy_count}, 卖出 {sell_count}")
     except Exception as e:
         logger.error(f"信号生成失败: {e}")
         if is_ci:
