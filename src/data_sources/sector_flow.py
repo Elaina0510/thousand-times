@@ -54,8 +54,12 @@ def fetch_sector_flow(indicator: str = "今日") -> pd.DataFrame:
     except FuturesTimeout:
         logger.warning(f"获取行业资金流向超时 ({_API_TIMEOUT}s)")
         return pd.DataFrame()
+    except (ValueError, KeyError) as e:
+        # JSON 解析失败或数据字段缺失（CI 海外网络常见）
+        logger.warning(f"获取行业资金流向失败（数据格式异常）: {e}")
+        return pd.DataFrame()
     except Exception as e:
-        logger.error(f"获取行业资金流向失败: {e}")
+        logger.warning(f"获取行业资金流向失败: {e}")
         return pd.DataFrame()
 
 
