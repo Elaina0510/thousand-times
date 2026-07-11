@@ -1,22 +1,89 @@
 """信号生成模块 — 基于因子评分生成买卖信号.
 
-使用5信号投票制：
-1. 因子综合 — total_score vs 阈值
-2. 技术面 — technical_score vs 阈值
+使用5信号投票制（V3 自适应版）：
+1. 因子综合 — total_score vs 阈值（自适应市场环境）
+2. 技术面 — technical_score vs 阈值（自适应市场环境）
 3. 资金面 — capital_score vs 阈值
 4. 动量 — momentum_score vs 阈值
 5. 市场环境 — 牛熊市增强/削弱
+
+V3 新增：AdaptiveThresholds 根据市场环境动态调整投票阈值，
+解决 V2 固定阈值导致"全部观望"的问题。
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger("thousand-times")
+
+
+@dataclass
+class AdaptiveThresholds:
+    """市场环境自适应的信号阈值（V3 新增）."""
+
+    # 投票数阈值
+    min_buy_votes: int = 2
+    min_sell_votes: int = 2
+    max_oppose_votes: int = 1   # 允许的最大反对票
+
+    # 分数阈值
+    factor_buy: float = 70.0    # 综合因子买入阈值
+    factor_sell: float = 30.0
+    technical_buy: float = 75.0  # 技术因子买入阈值
+    technical_sell: float = 25.0
+
+    # 盈亏比要求
+    min_risk_reward: float = 2.0
+
+    @staticmethod
+    def for_regime(state: str) -> AdaptiveThresholds:
+        """根据市场环境返回对应阈值.
+
+        Args:
+            state: 市场环境状态 ("bull", "bear", "sideways").
+
+        Returns:
+            该环境下的自适应阈值.
+        """
+        if state == "bull":
+            return AdaptiveThresholds(
+                min_buy_votes=2,         # 牛市中2票即可买入（更积极）
+                min_sell_votes=4,        # 牛市中卖出需4票（更谨慎做空）
+                max_oppose_votes=2,
+                factor_buy=65.0,         # 牛市中降低买入门槛
+                factor_sell=25.0,
+                technical_buy=65.0,
+                technical_sell=20.0,
+                min_risk_reward=1.5,
+            )
+        elif state == "bear":
+            return AdaptiveThresholds(
+                min_buy_votes=4,         # 熊市中买入需4票（更谨慎）
+                min_sell_votes=2,        # 熊市中2票即可卖出（更积极止损）
+                max_oppose_votes=1,
+                factor_buy=80.0,         # 熊市中提高买入门槛
+                factor_sell=35.0,
+                technical_buy=80.0,
+                technical_sell=30.0,
+                min_risk_reward=2.5,     # 要求更高盈亏比
+            )
+        else:  # sideways
+            return AdaptiveThresholds(
+                min_buy_votes=2,
+                min_sell_votes=2,
+                max_oppose_votes=1,
+                factor_buy=70.0,
+                factor_sell=30.0,
+                technical_buy=75.0,
+                technical_sell=25.0,
+                min_risk_reward=2.0,
+            )
 
 
 @dataclass
@@ -56,11 +123,25 @@ class Signal:
     reason: str = ""
 
 
-def _vote_factor(fs: object, config: object) -> SignalVote:
-    """因子综合投票。"""
-    signal_config = getattr(config, "signal", None)
-    buy_th = getattr(signal_config, "factor_buy_threshold", 70.0) if signal_config else 70.0
-    sell_th = getattr(signal_config, "factor_sell_threshold", 30.0) if signal_config else 30.0
+def _vote_factor(
+    fs: object,
+    config: object,
+    thresholds: AdaptiveThresholds | None = None,
+) -> SignalVote:
+    """因子综合投票（V3：支持自适应阈值）.
+
+    Args:
+        fs: FactorScores 或 CalibratedScores.
+        config: AppConfig.
+        thresholds: 自适应阈值，None 时使用 config 中的固定阈值（V2 兼容）.
+    """
+    if thresholds is not None:
+        buy_th = thresholds.factor_buy
+        sell_th = thresholds.factor_sell
+    else:
+        signal_config = getattr(config, "signal", None)
+        buy_th = getattr(signal_config, "factor_buy_threshold", 70.0) if signal_config else 70.0
+        sell_th = getattr(signal_config, "factor_sell_threshold", 30.0) if signal_config else 30.0
 
     total = getattr(fs, "total", 50.0)
     if total >= buy_th:
@@ -71,11 +152,25 @@ def _vote_factor(fs: object, config: object) -> SignalVote:
         return SignalVote("factor", "neutral", 0.5, f"综合因子 {total:.0f}")
 
 
-def _vote_technical(fs: object, config: object) -> SignalVote:
-    """技术面投票。"""
-    signal_config = getattr(config, "signal", None)
-    buy_th = getattr(signal_config, "technical_buy_threshold", 75.0) if signal_config else 75.0
-    sell_th = getattr(signal_config, "technical_sell_threshold", 25.0) if signal_config else 25.0
+def _vote_technical(
+    fs: object,
+    config: object,
+    thresholds: AdaptiveThresholds | None = None,
+) -> SignalVote:
+    """技术面投票（V3：支持自适应阈值）.
+
+    Args:
+        fs: FactorScores 或 CalibratedScores.
+        config: AppConfig.
+        thresholds: 自适应阈值，None 时使用 config 中的固定阈值（V2 兼容）.
+    """
+    if thresholds is not None:
+        buy_th = thresholds.technical_buy
+        sell_th = thresholds.technical_sell
+    else:
+        signal_config = getattr(config, "signal", None)
+        buy_th = getattr(signal_config, "technical_buy_threshold", 75.0) if signal_config else 75.0
+        sell_th = getattr(signal_config, "technical_sell_threshold", 25.0) if signal_config else 25.0
 
     tech = getattr(fs, "technical", 50.0)
     if tech >= buy_th:
@@ -167,9 +262,9 @@ def calc_key_prices(kline: pd.DataFrame, config: object) -> KeyPrices:
         tr_list = []
         for i in range(-14, 0):
             h = highs.iloc[i]
-            l = lows.iloc[i]
+            lo = lows.iloc[i]
             prev_c = closes.iloc[i - 1]
-            tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+            tr = max(h - lo, abs(h - prev_c), abs(lo - prev_c))
             tr_list.append(tr)
         atr = np.mean(tr_list)
 
@@ -209,7 +304,10 @@ def calc_key_prices(kline: pd.DataFrame, config: object) -> KeyPrices:
 
 
 def _decide_action(votes: list[SignalVote], config: object) -> tuple[str, float]:
-    """根据投票决定行动.
+    """根据投票决定行动（V2 固定阈值，已废弃）.
+
+    已废弃: 请使用 _decide_action_adaptive。
+    保留此函数用于 V1 回退兼容。
 
     Args:
         votes: 投票列表。
@@ -218,6 +316,11 @@ def _decide_action(votes: list[SignalVote], config: object) -> tuple[str, float]
     Returns:
         (action, confidence) 元组。
     """
+    warnings.warn(
+        "_decide_action is deprecated, use _decide_action_adaptive instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     signal_config = getattr(config, "signal", None)
     min_buy_votes = getattr(signal_config, "min_buy_votes", 3) if signal_config else 3
     min_sell_votes = getattr(signal_config, "min_sell_votes", 3) if signal_config else 3
@@ -234,66 +337,136 @@ def _decide_action(votes: list[SignalVote], config: object) -> tuple[str, float]
         return "hold", 0.5
 
 
+def _decide_action_adaptive(
+    votes: list[SignalVote],
+    thresholds: AdaptiveThresholds,
+    risk_reward: float,
+) -> tuple[str, float, str]:
+    """自适应投票决策（替代现有的 _decide_action）.
+
+    改造要点：
+    1. 阈值不再硬编码，根据市场环境动态调整
+    2. 增加 max_oppose_votes 约束（买入信号中不允许太多反对票）
+    3. 盈亏比作为独立否决条件
+    4. 返回详细理由而非简单的"观望"
+
+    Args:
+        votes: 5个SignalVote。
+        thresholds: 当前市场环境的自适应阈值。
+        risk_reward: 关键价位的盈亏比。
+
+    Returns:
+        (action: "buy"/"sell"/"hold",
+         confidence: 0.0~1.0,
+         detail: 决策理由)
+    """
+    buy_votes = sum(1 for v in votes if v.vote == "buy")
+    sell_votes = sum(1 for v in votes if v.vote == "sell")
+    neutral_votes = len(votes) - buy_votes - sell_votes
+
+    # 买入决策
+    if buy_votes >= thresholds.min_buy_votes and sell_votes <= thresholds.max_oppose_votes:
+        if risk_reward < thresholds.min_risk_reward:
+            return (
+                "hold", 0.4,
+                f"买入票数{buy_votes}满足但盈亏比{risk_reward:.1f}<{thresholds.min_risk_reward}",
+            )
+        confidence = buy_votes / len(votes)
+        return ("buy", confidence, f"买入({buy_votes}/{len(votes)}票), 盈亏比{risk_reward:.1f}")
+
+    # 卖出决策
+    if sell_votes >= thresholds.min_sell_votes and buy_votes <= thresholds.max_oppose_votes:
+        confidence = sell_votes / len(votes)
+        return ("sell", confidence, f"卖出({sell_votes}/{len(votes)}票)")
+
+    # 观望 — 提供更有信息量的理由
+    if buy_votes == 2:
+        return ("hold", 0.45, f"接近买入(buy={buy_votes}, sell={sell_votes})，等待确认")
+    elif sell_votes == 2:
+        return ("hold", 0.45, f"接近卖出(buy={buy_votes}, sell={sell_votes})，关注风险")
+    else:
+        return (
+            "hold", 0.5,
+            f"信号混合(buy={buy_votes}, sell={sell_votes}, neutral={neutral_votes})",
+        )
+
+
 def generate_signals(
-    factors: list,
+    factors: list[object],
     data: object,
     config: object,
     regime_state: str = "sideways",
+    use_adaptive: bool = True,
 ) -> list[Signal]:
-    """生成交易信号.
+    """生成交易信号（V3：默认使用自适应阈值）.
 
     Args:
-        factors: FactorScores 列表。
+        factors: FactorScores 或 CalibratedScores 列表。
         data: DataBundle。
         config: AppConfig。
         regime_state: 市场环境状态。
+        use_adaptive: 是否使用自适应阈值（V3），False 回退到 V2 固定阈值。
 
     Returns:
         Signal 列表。
     """
     kline_cache = getattr(data, "kline_cache", {})
-    min_risk_reward = 2.0
-    signal_config = getattr(config, "signal", None)
-    if signal_config:
-        min_risk_reward = getattr(signal_config, "min_risk_reward", 2.0)
+
+    # V3: 获取自适应阈值
+    thresholds = None
+    if use_adaptive:
+        thresholds = AdaptiveThresholds.for_regime(regime_state)
+        min_risk_reward = thresholds.min_risk_reward
+    else:
+        signal_config = getattr(config, "signal", None)
+        min_risk_reward = getattr(signal_config, "min_risk_reward", 2.0) if signal_config else 2.0
 
     signals: list[Signal] = []
 
     for fs in factors:
-        # 5 票投票
+        # 5 票投票（V3：使用自适应阈值）
         votes: list[SignalVote] = [
-            _vote_factor(fs, config),
-            _vote_technical(fs, config),
+            _vote_factor(fs, config, thresholds),
+            _vote_technical(fs, config, thresholds),
             _vote_capital(fs, config),
             _vote_momentum(fs, config),
             _vote_regime(fs, regime_state, config),
         ]
 
-        # 决策
-        action, confidence = _decide_action(votes, config)
-
-        # 计算关键价位
-        kline = kline_cache.get(fs.code, pd.DataFrame())
+        # 决策（V3：使用自适应投票逻辑）
+        code = str(getattr(fs, "code", ""))
+        kline = kline_cache.get(code, pd.DataFrame())
         key_prices = calc_key_prices(kline, config)
 
-        # 盈亏比过滤（仅对买入信号）
-        if action == "buy" and key_prices.risk_reward_ratio < min_risk_reward:
-            action = "hold"
-            confidence = 0.5
+        if use_adaptive and thresholds is not None:
+            action, confidence, detail = _decide_action_adaptive(
+                votes, thresholds, key_prices.risk_reward_ratio,
+            )
+        else:
+            # V2 兼容模式
+            action, confidence = _decide_action(votes, config)
+            detail = ""
+            # 盈亏比过滤（仅对买入信号）
+            if action == "buy" and key_prices.risk_reward_ratio < min_risk_reward:
+                action = "hold"
+                confidence = 0.5
 
         # 综合理由
-        buy_votes = [v for v in votes if v.vote == "buy"]
-        sell_votes = [v for v in votes if v.vote == "sell"]
-        if action == "buy":
-            reason = f"买入({len(buy_votes)}/5): " + ", ".join(v.source for v in buy_votes)
-        elif action == "sell":
-            reason = f"卖出({len(sell_votes)}/5): " + ", ".join(v.source for v in sell_votes)
+        if detail:
+            reason = detail
         else:
-            reason = f"观望(buy={len(buy_votes)}, sell={len(sell_votes)})"
+            buy_votes = [v for v in votes if v.vote == "buy"]
+            sell_votes = [v for v in votes if v.vote == "sell"]
+            if action == "buy":
+                reason = f"买入({len(buy_votes)}/5): " + ", ".join(v.source for v in buy_votes)
+            elif action == "sell":
+                reason = f"卖出({len(sell_votes)}/5): " + ", ".join(v.source for v in sell_votes)
+            else:
+                reason = f"观望(buy={len(buy_votes)}, sell={len(sell_votes)})"
 
         signals.append(Signal(
-            code=fs.code,
-            name=fs.name,
+            code=str(getattr(fs, "code", "")),
+            name=str(getattr(fs, "name", "")),
             action=action,
             confidence=confidence,
             key_prices=key_prices,

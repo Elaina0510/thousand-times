@@ -231,3 +231,197 @@ class TestGenerateSignals:
         data_with_kline = type("Data", (), {"kline_cache": {"000001": kline}})()
         signals = generate_signals(factors, data_with_kline, MockConfig())
         assert signals[0].action == "buy"
+
+
+# ══════════════════════════════════════════════════════
+# V3 AdaptiveVoter 测试
+# ══════════════════════════════════════════════════════
+
+from src.pipeline.signal import (
+    AdaptiveThresholds,
+    _decide_action_adaptive,
+)
+
+
+class TestAdaptiveThresholds:
+    """自适应阈值测试."""
+
+    def test_bull_thresholds(self):
+        t = AdaptiveThresholds.for_regime("bull")
+        assert t.min_buy_votes == 2
+        assert t.min_sell_votes == 4
+        assert t.factor_buy == 65.0
+        assert t.min_risk_reward == 1.5
+
+    def test_bear_thresholds(self):
+        t = AdaptiveThresholds.for_regime("bear")
+        assert t.min_buy_votes == 4
+        assert t.min_sell_votes == 2
+        assert t.factor_buy == 80.0
+        assert t.min_risk_reward == 2.5
+
+    def test_sideways_thresholds(self):
+        t = AdaptiveThresholds.for_regime("sideways")
+        assert t.min_buy_votes == 2
+        assert t.min_sell_votes == 2
+        assert t.factor_buy == 70.0
+
+    def test_unknown_defaults_to_sideways(self):
+        t = AdaptiveThresholds.for_regime("unknown")
+        assert t.min_buy_votes == 2  # sideways default
+
+
+class TestDecideActionAdaptive:
+    """自适应投票决策测试."""
+
+    def test_bull_2buy_0sell_is_buy(self):
+        t = AdaptiveThresholds.for_regime("bull")
+        votes = [
+            SignalVote("factor", "buy", 0.8),
+            SignalVote("technical", "buy", 0.7),
+            SignalVote("capital", "neutral"),
+            SignalVote("momentum", "neutral"),
+            SignalVote("regime", "neutral"),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 2.0)
+        assert action == "buy"
+        assert conf > 0.3
+
+    def test_bear_2buy_0sell_is_hold(self):
+        t = AdaptiveThresholds.for_regime("bear")
+        votes = [
+            SignalVote("factor", "buy", 0.8),
+            SignalVote("technical", "buy", 0.7),
+            SignalVote("capital", "neutral"),
+            SignalVote("momentum", "neutral"),
+            SignalVote("regime", "neutral"),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 2.0)
+        assert action == "hold"  # 熊市需要 4 票
+
+    def test_sideways_2buy_0sell_is_buy(self):
+        t = AdaptiveThresholds.for_regime("sideways")
+        votes = [
+            SignalVote("factor", "buy", 0.8),
+            SignalVote("technical", "buy", 0.7),
+            SignalVote("capital", "neutral"),
+            SignalVote("momentum", "neutral"),
+            SignalVote("regime", "neutral"),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 2.0)
+        assert action == "buy"
+
+    def test_risk_reward_veto(self):
+        t = AdaptiveThresholds.for_regime("bull")
+        votes = [
+            SignalVote("factor", "buy", 0.8),
+            SignalVote("technical", "buy", 0.7),
+            SignalVote("capital", "buy", 0.6),
+            SignalVote("momentum", "neutral"),
+            SignalVote("regime", "neutral"),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 1.0)
+        assert action == "hold"
+        assert "盈亏比" in detail
+
+    def test_oppose_votes_block_buy(self):
+        t = AdaptiveThresholds.for_regime("sideways")
+        votes = [
+            SignalVote("factor", "buy", 0.8),
+            SignalVote("technical", "buy", 0.7),
+            SignalVote("capital", "buy", 0.6),
+            SignalVote("momentum", "sell", 0.6),
+            SignalVote("regime", "sell", 0.5),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 2.0)
+        assert action == "hold"  # sell=2 > max_oppose=1
+
+    def test_all_neutral(self):
+        t = AdaptiveThresholds.for_regime("bull")
+        votes = [
+            SignalVote("factor", "neutral"),
+            SignalVote("technical", "neutral"),
+            SignalVote("capital", "neutral"),
+            SignalVote("momentum", "neutral"),
+            SignalVote("regime", "neutral"),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 2.0)
+        assert action == "hold"
+        assert "信号混合" in detail
+
+    def test_near_buy_in_bear(self):
+        t = AdaptiveThresholds.for_regime("bear")
+        votes = [
+            SignalVote("factor", "buy", 0.8),
+            SignalVote("technical", "buy", 0.7),
+            SignalVote("capital", "neutral"),
+            SignalVote("momentum", "sell", 0.6),
+            SignalVote("regime", "neutral"),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 2.0)
+        assert action == "hold"
+
+    def test_sell_in_bear(self):
+        t = AdaptiveThresholds.for_regime("bear")
+        votes = [
+            SignalVote("factor", "sell", 0.8),
+            SignalVote("technical", "sell", 0.7),
+            SignalVote("capital", "neutral"),
+            SignalVote("momentum", "neutral"),
+            SignalVote("regime", "neutral"),
+        ]
+        action, conf, detail = _decide_action_adaptive(votes, t, 2.0)
+        assert action == "sell"  # 熊市 2 票即可卖出
+
+
+class TestVoteFactorAdaptive:
+    """自适应因子投票测试."""
+
+    def test_bull_lower_threshold(self):
+        t = AdaptiveThresholds.for_regime("bull")
+        fs = MockFactorScores(total=68.0)
+        vote = _vote_factor(fs, MockConfig(), t)
+        assert vote.vote == "buy"  # 68 >= 65
+
+    def test_bear_higher_threshold(self):
+        t = AdaptiveThresholds.for_regime("bear")
+        fs = MockFactorScores(total=75.0)
+        vote = _vote_factor(fs, MockConfig(), t)
+        assert vote.vote == "neutral"  # 75 < 80
+
+
+class TestGenerateSignalsV3:
+    """V3 信号生成测试."""
+
+    def test_v3_adaptive_mode(self):
+        factors = [
+            MockFactorScores(code="000001", total=75, technical=70, capital=65, momentum=60),
+            MockFactorScores(code="000002", total=25, technical=30, capital=35, momentum=40),
+        ]
+        data = type("Data", (), {"kline_cache": {}})()
+        signals = generate_signals(factors, data, MockConfig(), "bull", use_adaptive=True)
+        assert len(signals) == 2
+        assert all(s.action in ("buy", "sell", "hold") for s in signals)
+
+    def test_v2_compat_mode(self):
+        factors = [MockFactorScores(code="000001", total=75, technical=80, capital=65, momentum=60)]
+        data = type("Data", (), {"kline_cache": {}})()
+        signals = generate_signals(factors, data, MockConfig(), "sideways", use_adaptive=False)
+        assert len(signals) == 1
+
+    def test_adaptive_not_worse_than_v2(self):
+        """V3 should not produce fewer actionable signals than V2."""
+        factors = [
+            MockFactorScores(code=f"{i:06d}",
+                             total=40.0 + i * 0.6,
+                             technical=45.0 + i * 0.5,
+                             capital=40.0 + i * 0.55,
+                             momentum=50.0 + i * 0.3)
+            for i in range(50)
+        ]
+        data = type("Data", (), {"kline_cache": {}})()
+        v3 = generate_signals(factors, data, MockConfig(), "sideways", use_adaptive=True)
+        v2 = generate_signals(factors, data, MockConfig(), "sideways", use_adaptive=False)
+        v3_buy_sell = sum(1 for s in v3 if s.action in ("buy", "sell"))
+        v2_buy_sell = sum(1 for s in v2 if s.action in ("buy", "sell"))
+        assert v3_buy_sell >= v2_buy_sell
