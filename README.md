@@ -1,37 +1,83 @@
-# A股智能选股分析与推送系统
+# A股智能选股分析与推送系统 V3
 
-> 自动化A股行情分析系统，每日定时从多个数据源抓取股票和行业ETF行情数据，通过**多因子复合评分模型**（技术指标 + 趋势判断 + 政策新闻 + 基本面）综合打分，结合**市场环境自适应权重调整**，筛选出高概率盈利或存在特殊风险的个股和ETF，生成分析报告（含K线+MACD图表+买卖信号+关键价位），通过 PushPlus 推送到微信。
+> 自动化A股行情分析系统，五层架构流水线。每日从多数据源抓取行情，通过**数据质量校验 → 因子评分校准 → 自适应信号生成 → 风控执行 → 反馈验证**全流程，筛选推荐/风险标的，生成报告推送到微信。
+
+## 系统架构
+
+```
+统一管道入口: pipeline/unified.py
+│
+├── Layer 1: 数据质量层
+│   ├── data_quality/validator.py   — DataValidator (数据完整性校验)
+│   └── data_quality/unifier.py    — DataSourceUnifier (多数据源值域统一)
+│
+├── Layer 2: 因子评分层
+│   ├── factors/calibrator.py      — FactorCalibrator (百分位评分校准)
+│   └── factors/industry_rotation.py — IndustryRotationAnalyzer (行业轮动)
+│
+├── Layer 3: 信号生成层
+│   ├── pipeline/signal.py (改造)  — AdaptiveVoter (自适应投票阈值)
+│   └── pipeline/unified.py        — UnifiedPipeline (统一管道入口)
+│
+├── Layer 4: 风控执行层
+│   ├── risk/position.py           — PositionSizer (仓位计算)
+│   ├── risk/stop_loss.py          — StopLossTracker (止损跟踪)
+│   └── risk/guard.py              — RiskGuard (硬性风控规则)
+│
+└── Layer 5: 反馈验证层
+    ├── feedback/tracker.py         — SignalTracker (信号→收益闭环)
+    ├── feedback/backtest_validator.py — BacktestValidator (回测与检验)
+    └── feedback/paper_trader.py    — PaperTrader (纸交易模拟)
+```
+
+### 数据流
+
+```
+AKShare/BaoStock API
+  → pipeline/collect.py → DataBundle
+  → data_quality/validator.py → DataQualityReport
+  → data_quality/unifier.py → NormalizedFundamental[]
+  → pipeline/regime.py → MarketRegime
+  → pipeline/factors.py → FactorScores[] (raw)
+  → factors/calibrator.py → CalibratedScores[] (区分度↑)
+  → factors/industry_rotation.py → IndustryScoreAdjustment[]
+  → pipeline/signal.py (AdaptiveVoter) → Signal[]
+  → risk/guard.py → Signal[] (过滤后)
+  → risk/position.py → PositionAllocation[]
+  → risk/stop_loss.py → StopLossRecord[]
+  → feedback/tracker.py → 数据库
+  → pipeline/output.py → 报告 → push_service → 微信
+```
 
 ## 功能特性
 
-- **股票池筛选**：从A股全市场中筛选出符合条件的股票（市值≥20亿、非ST、PE>0、上市≥3个月），按市值降序取前200只
-- **ETF分析**：分析11只主流行业ETF（4只宽基 + 7只细分行业），独立评分
-- **技术指标分析**：MA均线系统（MA5/10/20/60）+ MACD（12/26/9）+ 量价关系 + 波动率（ATR/布林带），检测13种技术信号
-- **基本面分析**：ROE、EPS、净利润增长率、营收增长率、资产负债率、经营现金流、毛利率，七维度打分
-- **政策新闻分析**：抓取9大权威财经媒体新闻，通过 DeepSeek LLM 分析政策对各行业的影响方向和程度
-- **行业趋势判断**：将个股行业映射到对应板块ETF，通过ETF均线排列判断行业趋势
-- **市场环境判断**：基于中证全指自动识别牛市/熊市/震荡市，动态调整评分权重
-- **综合评分**：多维度加权评分模型，Sigmoid概率映射
-- **买卖信号**：基于综合评分生成买入/观望/卖出三档信号，计算支撑位、压力位、目标价和止损价
-- **板块对比**：分析个股在所属板块内的排名百分位和相对ETF的超额收益
-- **策略回测**：基于AKShare历史数据验证策略胜率、收益、夏普比率等指标
-- **图表生成**：生成K线+MACD图表（PNG格式）
-- **HTML报告**：生成包含图表的静态网页报告（图表内嵌base64，可离线浏览）
-- **磁盘缓存**：K线和基本面数据自动缓存24小时，支持增量更新
+- **数据质量校验**：10条校验规则，自动检测默认值填充、K线不足、空数据等，输出质量等级报告
+- **多数据源值域统一**：AKShare/BaoStock 双源 ROE/EPS/增长率自动统一为相同尺度，冲突检测
+- **百分位评分校准**：百分位排名+Z-score分布拉伸，解决评分压缩问题（σ: ~8 → ≥15）
+- **自适应投票信号**：市场环境自适应阈值（牛/熊/震荡），解决"全部观望"问题
+- **行业轮动分析**：31个申万一级行业动量计算，识别轮动模式，生成评分调整
+- **硬性风控规则**：8条风控规则（ST过滤、涨跌停、流动性、仙股、行业超配等）
+- **仓位计算**：Kelly启发式+波动率调整，市场环境自适应仓位限制
+- **止损跟踪**：追踪止损（盈利>10%保本，>20%锁定10%，>30%锁定20%），接近预警
+- **信号反馈闭环**：信号→收益追踪，自动推荐最优阈值
+- **回测验证**：t检验+蒙特卡洛模拟，6项通过标准
+- **纸交易模拟**：60天观察期，5项go-live条件
+- **多数据源容错**：BaoStock → AKShare 双源回退
+- **并行处理**：股票池、ETF池、新闻三路并行；K线和基本面数据线程池批量获取
+- **图表生成**：K线+MACD图表（PNG格式，深色背景中文标签）
+- **HTML报告**：图表内嵌base64，可离线浏览
 - **微信推送**：通过 PushPlus 推送到微信
-- **多数据源容错**：BaoStock → Ashare → AKShare 三级回退，支持海外服务器
-- **并行处理**：股票池、ETF池、新闻三路并行获取；K线和基本面数据使用线程池批量获取
-- **超时保护**：API请求超时自动跳过，单只股票分析失败不影响整体流程
+- **磁盘缓存**：K线和基本面数据24小时过期
 
 ## 技术栈
 
 | 组件 | 选型 |
 |------|------|
 | 语言 | Python 3.10+ |
-| 数据获取 | BaoStock（主） + Ashare（新浪/腾讯双源） + AKShare（东方财富） |
+| 数据获取 | BaoStock + AKShare（东方财富） |
 | 数据处理 | Pandas / NumPy |
 | 图表 | mplfinance / Matplotlib |
-| LLM | DeepSeek API（可选，用于政策新闻分析） |
+| LLM | DeepSeek API（可选） |
 | 推送 | PushPlus API |
 | 测试 | pytest |
 | 类型检查 | mypy（strict mode） |
@@ -42,304 +88,184 @@
 ```
 thousand-times/
 ├── .github/workflows/
-│   ├── daily_analysis.yml      # GitHub Actions 主工作流
-│   └── test.yml                # 测试工作流
+│   ├── daily_analysis.yml         # GitHub Actions 定时调度
+│   └── test.yml                   # 测试工作流
 ├── src/
-│   ├── __init__.py
-│   ├── config.py               # 配置管理（权重、阈值、ETF池）
-│   ├── main.py                 # 主程序（流水线编排）
-│   ├── stock_filter.py         # 股票池筛选（市值/ST/PE/上市时间）
-│   ├── etf_analyzer.py         # ETF分析（资金流向评分）
-│   ├── technical_analysis.py   # 技术指标（MA/MACD/量价/ATR/布林带）
-│   ├── fundamental_analysis.py # 基本面分析（ROE/EPS/增长率/负债率/现金流/毛利率）
-│   ├── news_analysis.py        # 政策新闻分析（LLM情感分类）
-│   ├── scoring.py              # 综合评分（四维度加权模型）
-│   ├── market_regime.py        # 市场环境判断（中证全指 → 动态权重）
-│   ├── buy_sell_signal.py      # 买卖信号生成（三档信号+关键价位）
-│   ├── sector_analysis.py      # 板块对比分析（排名/百分位/超额收益）
-│   ├── price_analysis.py       # 关键价位计算（支撑/压力/目标/止损）
-│   ├── chart_generator.py      # K线+MACD图表生成
-│   ├── report_generator.py     # 文本报告生成
-│   ├── html_report.py          # HTML报告生成（图表内嵌base64）
-│   ├── push_service.py         # 微信推送（PushPlus）
-│   ├── cache_manager.py        # 磁盘缓存管理（24h过期）
-│   ├── backtest.py             # 策略回测（基于AKShare历史数据）
-│   ├── baostock_data.py        # BaoStock 数据源封装
-│   ├── ashare.py               # Ashare 核心库（新浪+腾讯双源）
-│   ├── ashare_data.py          # Ashare 封装模块
-│   ├── remote_data.py          # 远程API数据源（可选）
-│   └── utils.py                # 通用工具（重试/延迟/超时）
-├── tests/                      # 单元测试（226个，与 src 一一对应）
-│   ├── mocks.py                # 测试 Mock 基础设施（无网络运行核心流程）
-│   └── scenario_14stocks.py    # 14种典型股票场景测试
-├── doc/                        # 文档（需求/设计/用户指南/开发者文档）
-├── cache/                      # 数据缓存（gitignore，24小时过期）
-├── charts/                     # 图表输出（gitignore）
-├── logs/                       # 日志输出（gitignore）
-├── .env.example                # 环境变量示例
-├── verify_config.py            # 配置验证脚本
+│   ├── config.py                  # 配置管理（权重、阈值、ETF池）
+│   ├── main.py                    # 主入口（已废弃，转发到 V3 管道）
+│   │
+│   ├── pipeline/                  # V3 统一管道
+│   │   ├── unified.py             # UnifiedPipeline（唯一入口）
+│   │   ├── collect.py             # 数据采集阶段
+│   │   ├── regime.py              # 市场环境判断
+│   │   ├── factors.py             # 多因子引擎
+│   │   ├── signal.py              # 信号生成（AdaptiveVoter）
+│   │   └── output.py              # 报告输出
+│   │
+│   ├── data_quality/              # Layer 1: 数据质量
+│   │   ├── validator.py           # 数据完整性校验
+│   │   └── unifier.py             # 多数据源值域统一
+│   │
+│   ├── factors/                   # Layer 2: 因子评分（V3新增）
+│   │   ├── technical.py           # 技术因子
+│   │   ├── fundamental.py         # 基本面因子
+│   │   ├── momentum.py            # 动量因子
+│   │   ├── capital.py             # 资金因子
+│   │   ├── sentiment.py           # 情绪因子
+│   │   ├── calibrator.py          # 百分位评分校准 (NEW)
+│   │   └── industry_rotation.py   # 行业轮动分析 (NEW)
+│   │
+│   ├── risk/                      # Layer 4: 风控执行 (NEW)
+│   │   ├── guard.py               # 硬性风控规则引擎
+│   │   ├── position.py            # 仓位计算与组合优化
+│   │   └── stop_loss.py           # 止损跟踪与移动止损
+│   │
+│   ├── feedback/                  # Layer 5: 反馈验证 (NEW)
+│   │   ├── tracker.py             # 信号→收益闭环追踪
+│   │   ├── backtest_validator.py  # 回测验证（t检验+蒙特卡洛）
+│   │   └── paper_trader.py        # 纸交易模拟
+│   │
+│   ├── data_sources/              # 数据源
+│   │   ├── sentiment.py           # 涨跌停统计
+│   │   ├── macro.py               # 宏观经济指标
+│   │   ├── capital_flow.py        # 北向资金
+│   │   └── sector_flow.py         # 行业资金流向
+│   │
+│   ├── stock_filter.py            # 股票池筛选
+│   ├── etf_analyzer.py            # ETF分析
+│   ├── fundamental_analysis.py    # 基本面数据获取
+│   ├── technical_analysis.py      # 技术指标（V1，保留兼容）
+│   ├── baostock_data.py           # BaoStock 封装
+│   ├── news_analysis.py           # 政策新闻分析（LLM）
+│   ├── chart_generator.py         # K线+MACD图表
+│   ├── report_generator.py        # 文本报告
+│   ├── html_report.py             # HTML报告
+│   ├── push_service.py            # 微信推送（PushPlus）
+│   ├── cache_manager.py           # 磁盘缓存管理
+│   └── utils.py                   # 通用工具
+│
+├── tests/                         # 单元测试（与 src 一一对应）
+├── doc/                           # 文档（需求/设计/用户指南）
+├── cache/                         # 数据缓存（gitignore）
+├── charts/                        # 图表输出（gitignore）
+├── logs/                          # 日志输出（gitignore）
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
 ```
 
-## 量化策略详解
+## V3 量化策略
 
-本系统采用**多因子复合评分模型**，将六大分析维度量化为0-100分的综合评分，并根据市场环境动态调整权重。
+### 1. 数据质量层 — 校验 & 统一
 
-### 策略架构总览
+**DataValidator** 对 DataBundle 执行 10 条校验规则：
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    股票池筛选                             │
-│  市值≥20亿 + 非ST + PE>0 + 上市≥3月 → 市值降序取前200只   │
-└────────────────────────┬────────────────────────────────┘
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              市场环境判断（中证全指）                       │
-│  牛市 → 技术面+5%   熊市 → 基本面+5%   震荡 → 默认权重    │
-└────────────────────────┬────────────────────────────────┘
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              多维度并行分析                                │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │ 技术指标  │  │ 基本面   │  │ 政策新闻  │  (三路并行)   │
-│  │ MA/MACD  │  │ ROE/EPS  │  │ LLM分析   │              │
-│  │ 量价/ATR │  │ 负债/现金流│ │ 行业影响   │              │
-│  │ 布林带   │  │ 增长率   │  │           │              │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘              │
-│       └──────────────┼──────────────┘                    │
-│                      ▼                                   │
-│  ┌──────────────────────────────────────┐               │
-│  │       四维度加权综合评分（动态权重）    │               │
-│  │  技术35% + 趋势25% + 新闻20% + 基本面20% │             │
-│  └──────────────────┬───────────────────┘               │
-└─────────────────────┼───────────────────────────────────┘
-                      ▼
-┌─────────────────────────────────────────────────────────┐
-│  买卖信号生成 → 关键价位计算 → 板块对比分析 → 报告生成推送  │
-└─────────────────────────────────────────────────────────┘
-```
+| 数据集 | 校验项 | 条件 | 等级 |
+|--------|--------|------|:----:|
+| K线 | 最少行数 | < 20行 | BAD |
+| K线 | 空数据比例 | > 30% | DEGRADED |
+| K线 | 列完整性 | 缺少收盘列 | BAD |
+| 基本面 | ROE默认值 | roe==0 比例 > 50% | BAD |
+| 基本面 | EPS默认值 | eps==0 比例 > 50% | BAD |
+| 资金面 | 空DataFrame | north_flow为空 | DEGRADED |
+| 情绪面 | 涨跌停比为0 | limit_up==0且limit_down==0 | DEGRADED |
 
-### 1. 技术指标分析
+**DataSourceUnifier** 统一 AKShare/BaoStock 双源值域：
 
-基于MA均线系统、MACD指标和波动率指标，检测13种技术信号：
+| 指标 | BaoStock原始 | AKShare原始 | 统一后 | 转换 |
+|------|-------------|-------------|--------|------|
+| ROE | 小数 (0.15) | 百分数 (3.2) | 百分数 (15.0) | BS×100, AK直用 |
+| EPS | 元/股 | 元/股 | 元/股 | 直用 |
+| 增长率 | 小数 (0.25) | 百分数 (25) | 百分数 (25) | BS×100, AK直用 |
 
-#### 均线信号
+优先级: AKShare > BaoStock > 空数据。差异 > 30% 时记录冲突。
 
-| 信号 | 检测条件 | 回看周期 | 评分权重 |
-|------|----------|----------|----------|
-| MA5/10 金叉 | MA5 上穿 MA10 | 近3日 | +5.0 |
-| MA5/10 死叉 | MA5 下穿 MA10 | 近3日 | -5.0 |
-| MA20/60 金叉 | MA20 上穿 MA60 | 近5日 | +5.0 |
-| 多头排列 | MA5 > MA10 > MA20 > MA60 | 最新日 | +5.0 |
-| 站上MA20 | 收盘价 > MA20 | 最新日 | +3.0 |
+### 2. 因子评分层 — 校准 & 行业轮动
 
-> **冲突处理**：金叉和死叉在窗口内同时发生时，只保留最后发生的信号，避免无意义的正负抵消。
-
-#### MACD信号
-
-| 信号 | 检测条件 | 回看周期 | 评分权重 |
-|------|----------|----------|----------|
-| MACD 金叉 | DIF 上穿 DEA | 近3日 | +5.0 |
-| MACD 死叉 | DIF 下穿 DEA | 近3日 | -5.0 |
-| 零轴上方金叉 | DIF > 0 且 DEA > 0 时的金叉 | 近3日 | +5.0 |
-| MACD 底背离 | 价格连续两次探底创新低，但MACD柱未创新低 | 近20日 | +5.0 |
-
-> **底背离检测改进**：使用局部极值点算法寻找价格和MACD的真实低点，要求两次探底确认，减少误判。
-
-#### 量价信号
-
-| 信号 | 检测条件 | 评分权重 |
-|------|----------|----------|
-| 放量上涨 | 涨幅 > 0 且量比 > 1.5倍（vs 5日均量） | +4.0 |
-| 放量下跌 | 跌幅 > -2% 且量比 > 2.0倍 | -4.0 |
-| 天量见天价 | 成交量达60日95%分位数且价在MA20上方 | -5.0 |
-| 缩量回调到位 | 价格在MA20附近±2%且量比 < 0.7 | +3.0 |
-
-> **天量检测改进**：使用95%分位数替代精确等于，避免浮点数比较不稳定。
-
-#### 波动率指标（新增）
-
-| 指标 | 说明 | 用途 |
-|------|------|------|
-| ATR（14日） | 平均真实波幅 | 衡量价格波动强度 |
-| 布林带宽度 | (上轨-下轨)/中轨 × 100% | 归一化波动率，判断压缩/扩张 |
-
-> 技术评分满分约 40 分（加分项合计 +39，扣分项合计 -18），截断到 0。
-
-### 2. 基本面分析
-
-| 指标 | 条件 | 评分 |
-|------|------|------|
-| ROE > 15% | 优秀盈利能力 | +8.0 |
-| ROE 10~15% | 中等盈利能力 | +3.0 |
-| ROE < 10% | 盈利能力较弱 | +0 |
-| EPS > 0 | 公司盈利 | +5.0 |
-| 净利润同比增速 > 20% | 高成长 | +10.0 |
-| 净利润同比增速 0~20% | 稳定增长 | +5.0 |
-| 净利润同比增速 < 0% | 利润下滑 | +0 |
-| 营收同比增速 > 15% | 高成长 | +7.0 |
-| 营收同比增速 0~15% | 稳定增长 | +3.0 |
-| 营收同比增速 < 0% | 营收下滑 | +0 |
-
-#### 新增调节因子
-
-| 指标 | 条件 | 效果 |
-|------|------|------|
-| 资产负债率 > 70% | 高杠杆风险 | 基础分 × 0.8（打折） |
-| 毛利率 > 30% | 优质业务 | 额外 +2.0 分 |
-| 每股经营现金流 > 0 | 盈利质量好 | 额外 +2.0 分 |
-
-> 基础满分 30 分，含调节因子最高可达 34 分。
-
-### 3. 政策新闻分析
-
-通过 DeepSeek LLM 对财经新闻进行结构化分析：
-
-- **信息源过滤**：仅保留9大权威财经媒体（新浪财经、东方财富、同花顺、证券时报、上海证券报、中国证券报、央视财经、人民日报、新华社）
-- **LLM分类**：影响行业、影响方向（正/负/中性）、影响程度（直接/间接）、影响评分（-20~+20）
-- **行业聚合**：按行业匹配并平均所有相关新闻的影响评分
-
-| 影响类型 | 评分 |
-|----------|------|
-| 直接利好 | +17.5 |
-| 间接利好 | +11.0 |
-| 中性 | +5.0 |
-| 间接利空 | -2.5 |
-| 直接利空 | -7.5 |
-
-### 4. 行业趋势判断
-
-将个股行业映射到板块ETF（覆盖28个行业关键词），通过ETF的均线排列状态判断行业趋势：
-
-| 趋势状态 | 判定条件 | 评分 |
-|----------|----------|------|
-| 上升趋势 | ETF均线多头排列 | +9.0 |
-| 横盘震荡 | 默认/无法判断 | +4.5 |
-| 下降趋势 | ETF均线空头排列 | +1.0 |
-
-### 5. 市场环境判断（新增）
-
-基于**中证全指**（000985）的均线排列和波动率，自动识别市场状态并动态调整评分权重：
-
-| 市场状态 | 判定条件 | 权重调整 |
-|----------|----------|----------|
-| 🐂 牛市 | 价格 > MA20，MA20 > MA60，低波动 | 技术面 +5%，基本面 -5% |
-| 🐻 熊市 | 价格 < MA20，MA20 < MA60，高波动 | 基本面 +5%，技术面 -5% |
-| 📊 震荡 | 信号混合 | 保持默认权重 |
-
-> 牛市中趋势跟踪更有效，因此提高技术面权重；熊市中防御性更重要，因此提高基本面权重。
-
-### 6. ETF资金流向分析
-
-通过ETF份额变化（近5日）判断资金流向：
-
-| 模式 | 评分 |
-|------|------|
-| 份额持续增长（≥5日） | 10.0 |
-| 份额持续增长（<5日） | 8.0 + (n/5)×2.0 |
-| 份额持续减少（≥5日） | 0.0 |
-| 份额持续减少（<5日） | 2.0 - (n/5)×2.0 |
-| 净增长但有波动 | 4.0 + (增长比例×3.0) |
-| 净减少但有波动 | 2.0 - (减少比例×2.0) |
-| 基本持平/无数据 | 3.0 |
-
-### 7. 综合评分模型
-
-各维度评分先归一化到 0~100，再按权重加权求和。权重根据市场环境动态调整。
-
-#### 个股模型（默认权重）
-
-| 维度 | 原始满分 | 权重 | 说明 |
-|------|----------|------|------|
-| 技术指标 | 55.0 | **35%** | MA/MACD/量价信号 |
-| 行业趋势 | 10.0 | **25%** | 板块ETF均线排列 |
-| 政策新闻 | 20.0 | **20%** | LLM行业影响评分 |
-| 基本面 | 30.0 | **20%** | ROE/EPS/增长率/负债率/现金流 |
-
-#### ETF模型（默认权重）
-
-| 维度 | 原始满分 | 权重 | 说明 |
-|------|----------|------|------|
-| 技术指标 | 55.0 | **55%** | MA/MACD/量价信号 |
-| 政策新闻 | 35.0 | **35%** | 行业匹配的政策影响 |
-| 资金流向 | 10.0 | **10%** | ETF份额变化 |
-
-#### Sigmoid概率映射
-
-使用 Sigmoid 函数将综合评分转换为盈利概率：
+**FactorCalibrator** 解决评分压缩（32.5~70.3, σ≈8）：
 
 ```
-P = 1 / (1 + e^(-0.1×(score-50)))
+1. 计算每只股票每个因子的百分位排名
+2. 百分位与原始分混合: final = raw×(1-w) + pct×w  (w=0.5)
+3. Z-score 拉伸: target_mean=50, target_std=20
+4. 截断到 [0, 100]
+效果: σ ≥ 15, 范围 ~5~95
 ```
 
-归一化后，评分 0 → 0%，评分 100 → 100%。
+**IndustryRotationAnalyzer** 识别 6 种轮动模式：
 
-#### 投资判断分类
+- `growth_rotation` — 成长板块领涨
+- `defensive_rotation` — 防御板块受青睐
+- `cyclical_rotation` — 周期板块走强
+- `broad_up` — 普涨行情
+- `broad_down` — 普跌行情
+- `no_pattern` — 无明显模式
 
-| 综合评分 | 投资判断 |
-|----------|----------|
-| ≥ 75 分 | strong_buy（强烈推荐） |
-| 60 ~ 74 分 | buy（推荐买入） |
-| 45 ~ 59 分 | hold（持有观望） |
-| < 45 分 | avoid（建议回避） |
+行业排名前10%: +5~+10分；前10-30%: +2~+5分；后30%: 0~-5分。
 
-### 8. 买卖信号与关键价位
+### 3. 信号生成层 — 自适应投票
 
-#### 信号区间（三档）
+**AdaptiveVoter** 根据市场环境动态调整阈值：
 
-| 综合评分 | 信号区间 | 图标 |
-|----------|----------|------|
-| ≥ 70 分 | 买入区 | 🟢 |
-| 30 ~ 69 分 | 观望区 | 🟡 |
-| < 30 分 | 卖出区 | 🔴 |
+| 参数 | 牛市 | 震荡 | 熊市 |
+|------|:----:|:----:|:----:|
+| 买入最低票数 | 2 | 2 | 4 |
+| 卖出最低票数 | 4 | 2 | 2 |
+| 因子买入阈值 | 65 | 70 | 80 |
+| 最低盈亏比 | 1.5 | 2.0 | 2.5 |
 
-#### 关键价位计算
+5票投票制：因子综合 + 技术面 + 资金面 + 动量 + 市场环境。
 
-基于 MA20 与近20日价格极值的加权平均：
+### 4. 风控执行层
+
+**RiskGuard** — 8条硬性风控规则（按优先级）：
+1. ST/*ST 过滤（block）
+2. 涨跌停检查 ≥ ±9.9%（block）
+3. 流动性过滤 < 1000万日均（block）
+4. 仙股过滤 < 2元（block）
+5. 行业超配 > 20%（block）
+6. 最大持仓（block）
+7. 重复信号 3日内（仅警告）
+8. 波动率 > 200%（仅警告）
+
+**PositionSizer** — 仓位计算公式：
 
 ```
-支撑位 = 0.4 × MA20 + 0.6 × 近20日最低价
-压力位 = 0.4 × MA20 + 0.6 × 近20日最高价
-目标价 = 当前价 + 2 × (压力位 - 当前价)     # 突破潜力
-止损价 = 当前价 - 0.5 × (当前价 - 支撑位)   # 较紧止损
+base_weight = confidence_i / Σ(confidence)
+vol_penalty = median_vol / vol_i
+regime_mult = {bull: 1.2, sideways: 0.8, bear: 0.4}
+总仓位上限 = {bull: 80%, sideways: 60%, bear: 30%}
+单只上限 ≤ 10%, 单行业 ≤ 20%
+shares = floor(weight × capital / price / 100) × 100
 ```
 
-#### 推送判定
+**StopLossTracker** — 追踪止损规则：
 
-| 综合评分 | 判定 | 推送行为 |
-|----------|------|----------|
-| ≥ 75 分 | 高概率盈利 | 推送，标注"建议关注" |
-| < 45 分 | 特殊风险 | 推送，标注"风险警示" |
-| 45 ~ 74 分 | 观望区间 | 不推送 |
+| 盈利 | 止损上移 |
+|------|----------|
+| > 10% | 入场价（保本） |
+| > 20% | 入场价 + 10% |
+| > 30% | 入场价 + 20% |
 
-### 9. 板块对比分析
+### 5. 反馈验证层
 
-每只股票在所属板块内的相对表现：
+**BacktestValidator** 通过标准（任一未达标不投入实盘）：
 
-- **板块内排名**：按综合评分降序排列
-- **百分位**：超过板块内多少比例的股票
-- **超额收益**：个股涨幅 - 对应板块ETF的5日涨幅
+| 指标 | 最低标准 |
+|------|:--------:|
+| 年化收益 | > 5% |
+| 超额收益 vs 沪深300 | > 3% |
+| 夏普比率 | > 0.5 |
+| 最大回撤 | < 25% |
+| 胜率（5日） | > 50% |
+| t检验 p值 | < 0.05 |
 
-### 10. 策略回测
-
-基于AKShare历史数据验证策略有效性，输出关键指标：
-
-| 指标 | 说明 |
-|------|------|
-| 胜率 | 买入信号触发后N日上涨的比例 |
-| 平均收益 | 各持仓周期的平均收益率 |
-| 最大回撤 | 单次信号的最大亏损 |
-| 夏普比率 | 风险调整后收益（假设无风险利率3%年化） |
-
-```bash
-# 运行回测
-python src/backtest.py --days 120 --pool-size 50
-
-# 自定义参数
-python src/backtest.py --days 180 --pool-size 100 --buy-threshold 75 --sell-threshold 25
-```
+**PaperTrader** go-live 条件：
+1. 纸交易运行 ≥ 60 个交易日
+2. 累计收益 > 0
+3. 夏普比率 > 0.5
+4. 最大回撤 < 20%
+5. 月胜率 > 50%
 
 ## 快速开始
 
@@ -351,50 +277,36 @@ pip install -r requirements.txt
 
 ### 2. 配置环境变量
 
-复制 `.env.example` 为 `.env` 并填入配置：
-
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env` 文件：
+编辑 `.env`：
 
 ```env
-# PushPlus 推送令牌（必填）
-PUSHPLUS_TOKEN=your-pushplus-token-here
-
-# LLM API 配置（可选，用于政策新闻分析）
-LLM_API_URL=https://api.deepseek.com/v1/chat/completions
-LLM_API_KEY=your-api-key-here
+PUSHPLUS_TOKEN=your-token
+LLM_API_URL=https://api.deepseek.com/v1/chat/completions  # 可选
+LLM_API_KEY=your-key  # 可选
 ```
 
-### 3. 验证配置
+### 3. 运行
 
 ```bash
-python verify_config.py
-```
+# V3 统一管道（推荐）
+python -c "from config import load_config; from pipeline.unified import run; run(load_config())"
 
-### 4. 运行分析
-
-```bash
+# V1 兼容入口（deprecated，自动转发到 V3）
 python src/main.py
-```
 
-### 5. 运行回测
+# 纸交易模式（不推送）
+python -c "from config import load_config; from pipeline.unified import run_paper_trading; run_paper_trading(load_config())"
 
-```bash
-python src/backtest.py --days 120 --pool-size 50
-```
+# 运行回测
+python src/feedback/backtest_validator.py
 
-### 6. 运行测试
-
-```bash
+# 运行测试
 pytest tests/ -v
-```
 
-### 7. 代码质量检查
-
-```bash
 # 类型检查
 mypy --strict src/
 
@@ -402,181 +314,50 @@ mypy --strict src/
 ruff check src/
 ```
 
-## 数据源说明
+## GitHub Actions
 
-### 数据源优先级与容错
+定时调度：工作日 11:45（北京时间）。支持手动触发。CI 环境自动容错。
 
-```
-BaoStock（证券宝）→ 国内外均可，免费 ✅
-  ↓ 失败
-Ashare（新浪/腾讯双源）→ 海外服务器可用 ✅
-  ↓ 失败
-AKShare（东方财富）→ 国内服务器可用
-```
-
-### BaoStock 数据源
-
-- **来源**：[baostock/baostock](https://github.com/baostock/baostock)
-- **数据源**：证券宝（baostock.com）
-- **优势**：国内外均可访问，数据全面，支持批量获取
-- **支持**：日线、周线、月线、分钟线，复权数据
-
-### Ashare 数据源
-
-- **来源**：[mpquant/Ashare](https://github.com/mpquant/Ashare)
-- **数据源**：新浪财经 + 腾讯财经（双源自动切换）
-- **优势**：海外服务器可用，无需 API Key，完全免费
-- **支持**：日线、周线、月线、分钟线（1m/5m/15m/30m/60m）
-
-### 海外服务器使用
-
-在海外服务器（如 GitHub Actions）运行时，系统自动使用 BaoStock / Ashare 获取数据，无需额外配置。
-
-## GitHub Actions 配置
-
-### 1. 配置 Secrets
-
-在 GitHub 仓库设置中添加以下 Secrets：
-
-| Secret 名称 | 说明 | 必填 |
-|-------------|------|------|
+| Secret | 说明 | 必填 |
+|--------|------|:----:|
 | `PUSHPLUS_TOKEN` | PushPlus 推送令牌 | ✅ |
-| `LLM_API_URL` | LLM API 地址（如 DeepSeek） | 可选 |
+| `LLM_API_URL` | LLM API 地址 | 可选 |
 | `LLM_API_KEY` | LLM API 密钥 | 可选 |
-
-### 2. 工作流配置
-
-- **定时调度**：工作日北京时间 11:45（非整点，避免 GitHub Actions 调度延迟）
-- **手动触发**：支持在 GitHub Actions 页面手动运行
-- **CI 环境**：自动检测并启用容错模式（数据获取失败时生成空报告而非崩溃）
-
-### 3. 运行环境
-
-| 环境 | 数据源 | 状态 |
-|------|--------|------|
-| 海外服务器 | BaoStock / Ashare | ✅ 正常 |
-| 国内服务器 | AKShare | ✅ 正常 |
-| 无网络 | 缓存数据 | ✅ 优雅降级 |
-
-## 配置参数
-
-所有参数均可在 `src/config.py` 中修改默认值，或通过环境变量覆盖：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `min_market_cap` | 20亿 | 最低市值筛选门槛 |
-| `min_listing_months` | 3个月 | 最低上市时间 |
-| `pool_size` | 200 | 股票池最大数量 |
-| `lookback_days` | 60天 | 技术分析回溯天数 |
-| `buy_threshold` | 70.0 | 买入区阈值 |
-| `sell_threshold` | 30.0 | 卖出区阈值 |
-| `ma_weight` | 0.4 | 支撑/压力位中均线权重 |
-| `request_delay_range` | 1.0~5.0秒 | API请求间隔 |
-| `max_retries` | 3次 | API重试次数 |
-
-### 默认ETF池（11只）
-
-| 代码 | 名称 | 类型 |
-|------|------|------|
-| 510300 | 沪深300ETF | 宽基 |
-| 510500 | 中证500ETF | 宽基 |
-| 159915 | 创业板ETF | 宽基 |
-| 588000 | 科创50ETF | 宽基 |
-| 512480 | 半导体ETF | 行业 |
-| 516160 | 新能源ETF | 行业 |
-| 512010 | 医药ETF | 行业 |
-| 159928 | 消费ETF | 行业 |
-| 512660 | 军工ETF | 行业 |
-| 510230 | 金融ETF | 行业 |
-| 512200 | 地产ETF | 行业 |
 
 ## 开发规范
 
-### 代码风格
-
 - 所有函数参数和返回值**必须**有类型注解
 - 所有公共函数和类**必须**有 Google 风格 docstring
-- 使用 `from __future__ import annotations` 延迟注解求值
+- 使用 `from __future__ import annotations`
 - 日志使用 `logging.getLogger("thousand-times")`
-
-### 测试规范
-
-- 每个模块必须有对应的 `tests/test_<module>.py`
-- 测试函数命名：`test_<功能描述>`
-- 使用 `pytest` 的 `monkeypatch` 模拟外部 API 调用
-- 不依赖网络连接，所有外部数据通过 mock 提交
-
-### 提交规范
-
-使用 Conventional Commits 格式：`<type>: <description>`
-
-- `feat`: 新功能
-- `fix`: 修复
-- `perf`: 性能优化
-- `test`: 测试
-- `docs`: 文档
-- `refactor`: 重构
+- 每个模块对应 `tests/test_<module>.py`
+- 使用 `pytest` + `monkeypatch` 模拟外部 API
+- 提交使用 Conventional Commits: `feat/fix/perf/test/docs/refactor`
 
 ## 更新日志
 
-### 2026-06-23
-- ✅ **BaoStock 降级**：main.py 检测 BaoStock 可用性，不可用时自动降级到 Ashare 数据源
-- ✅ **测试基础设施**：新增 tests/mocks.py，提供完整 Mock 工厂函数，支持无网络运行核心流程
-- ✅ **场景测试**：新增 tests/scenario_14stocks.py，覆盖 14 种典型股票场景（30 个测试用例）
-- ✅ **边界测试**：补充评分边界条件测试（精确阈值、概率单调性、负新闻截断等）
-- ✅ **测试覆盖**：226 个单元测试全部通过
+### V3 — 2026-07-11
 
-### 2026-06-17
-- ✅ **策略改进**：修复基本面数据字段错配（pe_ttm/pb → roe/eps），语义与实际含义对齐
-- ✅ **新增指标**：基本面增加资产负债率、经营现金流、毛利率三个维度
-- ✅ **技术修复**：MACD底背离改用局部极值点检测+两次探底确认，减少误判
-- ✅ **技术修复**：天量见天价改用95%分位数替代精确等于，避免浮点比较不稳定
-- ✅ **技术修复**：MA60使用min_periods=60，数据不足时不产生不可靠信号
-- ✅ **信号冲突**：金叉/死叉同时存在时只保留最后发生的信号
-- ✅ **波动率指标**：新增ATR（14日）和布林带宽度，为后续自适应阈值提供基础
-- ✅ **市场环境判断**：基于中证全指自动识别牛/熊/震荡市，动态调整评分权重
-- ✅ **策略回测**：新增回测框架，支持胜率、收益、夏普比率等指标验证
-- ✅ **缓存兼容**：旧缓存格式自动转换，平滑升级
-- ✅ **测试覆盖**：216个单元测试全部通过
+五层架构全面升级，12个新模块，解决10项核心问题：
 
-### 2026-06-17（早期）
-- ✅ 新增 HTML 报告生成（图表内嵌base64，可离线浏览）
-- ✅ 添加超时保护防止程序卡住
-- ✅ 修复股票池获取、新闻链接等问题
+- 🔴 **致命修复**：基本面数据值域统一（DataSourceUnifier）、评分分布拉伸（FactorCalibrator, σ≥15）、自适应投票阈值（AdaptiveVoter）、信号反馈闭环（SignalTracker）
+- 🟡 **重要新增**：仓位管理（PositionSizer）、止损跟踪（StopLossTracker）、回测验证（BacktestValidator, t检验+蒙特卡洛）
+- 🟢 **增强**：行业轮动（IndustryRotationAnalyzer, 31行业）、硬性风控（RiskGuard, 8条规则）、统一管道（UnifiedPipeline, 废弃V1）
+- ✅ 172 个单元测试全部通过，mypy --strict + ruff check 通过
 
-### 2026-06-13
-- ✅ 新增买卖信号模块（buy_sell_signal.py），三档信号展示
-- ✅ 新增板块对比分析模块（sector_analysis.py）
-- ✅ 新增关键价位计算模块（price_analysis.py）
-- ✅ 新增磁盘缓存管理模块（cache_manager.py）
-- ✅ 集成 BaoStock 数据源，支持批量获取K线数据
-- ✅ 并行获取股票池、ETF池、新闻，大幅缩短运行时间
-- ✅ 个股评分升级为四维度模型（技术+趋势+量价+基本面）
+### V2 — 2026-06
 
-### 2026-06-07
-- ✅ 集成 Ashare 数据源（新浪/腾讯双源），支持海外服务器
-- ✅ 添加 .env 文件支持（python-dotenv）
-- ✅ 添加配置验证脚本（verify_config.py）
-- ✅ 优化 GitHub Actions 配置
-- ✅ 添加 CI 环境容错处理
+- 多因子引擎（技术/基本面/资金/情绪/动量）、V2管道（collect→regime→factors→signal→output）
+- 市场环境判断、策略回测框架、HTML报告、BaoStock/AKShare双源集成
 
-### 2026-06-06
-- ✅ 完成所有模块开发（12个模块）
-- ✅ 119个单元测试全部通过
-- ✅ 配置 GitHub Actions 自动执行
+### V1 — 2026-06
+
+- 初始版本：技术指标、基本面分析、政策新闻LLM分析、综合评分、微信推送
 
 ## 免责声明
 
 ⚠️ 本系统仅供学习研究使用，不构成任何投资建议。股市有风险，投资需谨慎。
 
-## 相关链接
-
-- [BaoStock](http://baostock.com) - 证券宝数据接口
-- [Ashare](https://github.com/mpquant/Ashare) - 新浪/腾讯双源 A 股数据
-- [AKShare](https://github.com/akfamily/akshare) - 东方财富数据接口
-- [PushPlus](https://www.pushplus.plus/) - 微信推送服务
-- [DeepSeek](https://platform.deepseek.com/) - LLM API 服务
-
 ## 许可证
 
-本项目仅供学习研究使用，请遵守相关法律法规。
+仅供学习研究使用。
